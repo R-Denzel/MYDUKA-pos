@@ -15,7 +15,6 @@ export default function ScannerView({ onClose, onAddNewProduct }: ScannerViewPro
   const [showManual, setShowManual] = useState(false);
   const [cameraError, setCameraError] = useState(false);
   const [isLoadingCamera, setIsLoadingCamera] = useState(false);
-  const [cameraLabel, setCameraLabel] = useState('');
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const hasScanned = useRef(false);
 
@@ -52,25 +51,12 @@ export default function ScannerView({ onClose, onAddNewProduct }: ScannerViewPro
         throw new Error('Camera API not available');
       }
 
-      // Enumerate cameras
-      let cameras = await Html5Qrcode.getCameras();
-      if (!cameras || cameras.length === 0) {
-        throw new Error('No cameras found on device');
-      }
-
-      // Find rear/environment camera
-      const envCamera = cameras.find((c) => /back|rear|environment/i.test(c.label)) || cameras[0];
-      setCameraLabel(envCamera.label);
-
       const scanner = new Html5Qrcode('barcode-reader');
       scannerRef.current = scanner;
 
       const config = {
         fps: 10,
-        qrbox: { width: 320, height: 200 },
-        aspectRatio: 1.78,
-        facingMode: 'environment',
-        rememberLastUsedCamera: true,
+        qrbox: 250,
         formatsToSupport: [
           Html5QrcodeSupportedFormats.EAN_13,
           Html5QrcodeSupportedFormats.EAN_8,
@@ -78,12 +64,14 @@ export default function ScannerView({ onClose, onAddNewProduct }: ScannerViewPro
           Html5QrcodeSupportedFormats.CODE_39,
           Html5QrcodeSupportedFormats.UPC_A,
           Html5QrcodeSupportedFormats.UPC_E,
-          Html5QrcodeSupportedFormats.QR_CODE,
+          Html5QrcodeSupportedFormats.CODE_93,
+          Html5QrcodeSupportedFormats.CODABAR,
         ],
       };
 
+      // Try to start with environment camera constraint
       await scanner.start(
-        envCamera.id,
+        { facingMode: 'environment' },
         config,
         (decodedText: string) => {
           if (!hasScanned.current) {
@@ -96,12 +84,13 @@ export default function ScannerView({ onClose, onAddNewProduct }: ScannerViewPro
         }
       );
       setIsLoadingCamera(false);
-    } catch (err) {
+      toast.success('Camera ready');
+    } catch (err: any) {
       console.error('Camera error:', err);
       setCameraError(true);
       setShowManual(true);
       setIsLoadingCamera(false);
-      toast.error('Camera unavailable. Using manual entry.');
+      toast.error(err?.message || 'Camera unavailable');
     }
   }, [handleLookup]);
 
@@ -152,17 +141,25 @@ export default function ScannerView({ onClose, onAddNewProduct }: ScannerViewPro
 
       {/* Camera View */}
       {!showManual && !cameraError && (
-        <div className="flex-1 relative flex items-center justify-center bg-black">
+        <div className="flex-1 relative flex flex-col items-center justify-center bg-black">
           {isLoadingCamera && (
-            <p className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-background/70 text-body">
-              Loading camera...
-            </p>
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center">
+              <p className="text-background text-body font-semibold">Starting camera...</p>
+              <p className="text-background/60 text-meta mt-2">Please allow camera access if prompted</p>
+            </div>
           )}
           <div id="barcode-reader" className="w-full h-full" />
           {!isLoadingCamera && (
-            <p className="absolute bottom-8 left-0 right-0 text-center text-background/70 text-meta">
-              Point camera at barcode
-            </p>
+            <div className="absolute bottom-8 left-0 right-0 px-4">
+              <div className="bg-black/70 rounded-lg p-4 text-center">
+                <p className="text-background text-body font-semibold mb-1">
+                  Hold phone 15-20cm from barcode
+                </p>
+                <p className="text-background/70 text-meta">
+                  Keep steady • Ensure good lighting • Align barcode in center
+                </p>
+              </div>
+            </div>
           )}
         </div>
       )}
