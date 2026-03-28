@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useStore } from '@/store/useStore';
-import { X, Keyboard, Camera } from 'lucide-react';
+import { X, Keyboard, Camera, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
-import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
+import { Html5Qrcode, Html5QrcodeSupportedFormats, Html5QrcodeScanType } from 'html5-qrcode';
 
 interface ScannerViewProps {
   onClose: () => void;
@@ -14,6 +14,8 @@ export default function ScannerView({ onClose, onAddNewProduct }: ScannerViewPro
   const [manualCode, setManualCode] = useState('');
   const [showManual, setShowManual] = useState(false);
   const [cameraError, setCameraError] = useState(false);
+  const [isLoadingCamera, setIsLoadingCamera] = useState(false);
+  const [cameraLabel, setCameraLabel] = useState('');
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const hasScanned = useRef(false);
 
@@ -42,43 +44,64 @@ export default function ScannerView({ onClose, onAddNewProduct }: ScannerViewPro
 
   const startScanner = useCallback(async () => {
     try {
+      setIsLoadingCamera(true);
+      setCameraError(false);
+
+      // Check if mediaDevices is available
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('Camera API not available');
+      }
+
+      // Enumerate cameras
+      let cameras = await Html5Qrcode.getCameras();
+      if (!cameras || cameras.length === 0) {
+        throw new Error('No cameras found on device');
+      }
+
+      // Find rear/environment camera
+      const envCamera = cameras.find((c) => /back|rear|environment/i.test(c.label)) || cameras[0];
+      setCameraLabel(envCamera.label);
+
       const scanner = new Html5Qrcode('barcode-reader');
       scannerRef.current = scanner;
 
+      const config = {
+        fps: 10,
+        qrbox: { width: 320, height: 200 },
+        aspectRatio: 1.78,
+        facingMode: 'environment',
+        rememberLastUsedCamera: true,
+        formatsToSupport: [
+          Html5QrcodeSupportedFormats.EAN_13,
+          Html5QrcodeSupportedFormats.EAN_8,
+          Html5QrcodeSupportedFormats.CODE_128,
+          Html5QrcodeSupportedFormats.CODE_39,
+          Html5QrcodeSupportedFormats.UPC_A,
+          Html5QrcodeSupportedFormats.UPC_E,
+          Html5QrcodeSupportedFormats.QR_CODE,
+        ],
+      };
+
       await scanner.start(
-        {
-          facingMode: { ideal: 'environment' },
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-        },
-        {
-          fps: 15,
-          qrbox: { width: 360, height: 240 },
-          aspectRatio: 1.78,
-          rememberLastUsedCamera: true,
-          formatsToSupport: [
-            Html5QrcodeSupportedFormats.EAN_13,
-            Html5QrcodeSupportedFormats.EAN_8,
-            Html5QrcodeSupportedFormats.CODE_128,
-            Html5QrcodeSupportedFormats.CODE_39,
-            Html5QrcodeSupportedFormats.UPC_A,
-            Html5QrcodeSupportedFormats.UPC_E,
-            Html5QrcodeSupportedFormats.QR_CODE,
-          ],
-        },
-        (decodedText) => {
+        envCamera.id,
+        config,
+        (decodedText: string) => {
           if (!hasScanned.current) {
             hasScanned.current = true;
             handleLookup(decodedText);
           }
         },
         () => {
-          // Ignore scan failures (no barcode in frame)
+          // Ignore frame failures
         }
       );
-    } catch {
+      setIsLoadingCamera(false);
+    } catch (err) {
+      console.error('Camera error:', err);
       setCameraError(true);
       setShowManual(true);
+      setIsLoadingCamera(false);
+      toast.error('Camera unavailable. Using manual entry.');
     }
   }, [handleLookup]);
 
@@ -130,20 +153,46 @@ export default function ScannerView({ onClose, onAddNewProduct }: ScannerViewPro
       {/* Camera View */}
       {!showManual && !cameraError && (
         <div className="flex-1 relative flex items-center justify-center bg-black">
+          {isLoadingCamera && (
+            <p className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-background/70 text-body">
+              Loading camera...
+            </p>
+          )}
           <div id="barcode-reader" className="w-full h-full" />
-          <p className="absolute bottom-8 left-0 right-0 text-center text-background/70 text-meta">
-            Point camera at barcode
-          </p>
+          {!isLoadingCamera && (
+            <p className="absolute bottom-8 left-0 right-0 text-center text-background/70 text-meta">
+              Point camera at barcode
+            </p>
+          )}
         </div>
       )}
 
       {/* Manual Input */}
       {(showManual || cameraError) && (
-        <div className="flex-1 flex flex-col items-center justify-center px-6">
+        <div className="flex-1 flex flex-col items-center justify-center px-6 space-y-4">
           {cameraError && (
-            <p className="text-background/60 text-meta mb-4 text-center">
-              Camera not available. Enter barcode manually.
-            </p>
+            <>
+              <p className="text-background/80 text-body font-semibold text-center">
+                Camera Access Required
+              </p>
+              <p className="text-background/60 text-meta text-center">
+                Safari needs camera permission. Check Settings &gt; Safari &gt; Camera and allow access, then try again.
+              </p>
+              <button
+                onClick={() => {
+                  hasScanned.current = false;
+                  setShowManual(false);
+                  setCameraError(false);
+                }}
+                className="flex items-center gap-2 bg-accent text-accent-foreground rounded-lg px-4 py-3 font-semibold active-scale touch-target"
+              >
+                <RotateCcw className="w-4 h-4" />
+                Retry Camera
+              </button>
+              <p className="text-background/60 text-meta text-center text-xs">
+                Or enter barcode manually below
+              </p>
+            </>
           )}
           <input
             type="text"
