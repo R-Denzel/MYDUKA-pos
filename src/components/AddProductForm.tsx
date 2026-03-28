@@ -13,8 +13,8 @@ export default function AddProductForm({ onClose, prefillBarcode }: AddProductFo
   const [name, setName] = useState('');
   const [barcode, setBarcode] = useState(prefillBarcode || '');
   const [category, setCategory] = useState<string>(CATEGORIES[0]);
-  const [basePrice, setBasePrice] = useState('');
-  const [stock, setStock] = useState('');
+  const [basePrice, setBasePrice] = useState(prefillBarcode ? '1' : '');
+  const [stock, setStock] = useState(prefillBarcode ? '1' : '');
   const [hasVariants, setHasVariants] = useState(false);
   const [variants, setVariants] = useState<{ name: string; price: string; stock: string }[]>([]);
 
@@ -112,6 +112,9 @@ export default function AddProductForm({ onClose, prefillBarcode }: AddProductFo
             placeholder="Scan or enter barcode (optional)"
             className="w-full bg-card border border-border rounded-lg px-4 py-3 text-body focus:outline-none focus:ring-2 focus:ring-accent"
           />
+          {prefillBarcode && (
+            <p className="text-success text-xs mt-1">Scanned barcode: {prefillBarcode}. Enter name and price to save.</p>
+          )}
         </div>
 
         <div>
