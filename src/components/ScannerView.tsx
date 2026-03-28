@@ -56,16 +56,18 @@ export default function ScannerView({ onClose, onAddNewProduct }: ScannerViewPro
 
       const config = {
         fps: 10,
-        qrbox: 250,
+        qrbox: 300,
+        disableFlip: false,
         formatsToSupport: [
           Html5QrcodeSupportedFormats.EAN_13,
           Html5QrcodeSupportedFormats.EAN_8,
-          Html5QrcodeSupportedFormats.CODE_128,
-          Html5QrcodeSupportedFormats.CODE_39,
           Html5QrcodeSupportedFormats.UPC_A,
           Html5QrcodeSupportedFormats.UPC_E,
+          Html5QrcodeSupportedFormats.CODE_128,
+          Html5QrcodeSupportedFormats.CODE_39,
           Html5QrcodeSupportedFormats.CODE_93,
           Html5QrcodeSupportedFormats.CODABAR,
+          Html5QrcodeSupportedFormats.ITF,
         ],
       };
 
@@ -76,15 +78,16 @@ export default function ScannerView({ onClose, onAddNewProduct }: ScannerViewPro
         (decodedText: string) => {
           if (!hasScanned.current) {
             hasScanned.current = true;
+            console.log('Scanned barcode:', decodedText);
             handleLookup(decodedText);
           }
         },
-        () => {
-          // Ignore frame failures
+        (errorMessage: string) => {
+          // Ignore frame-by-frame scanning failures - these are normal
         }
       );
       setIsLoadingCamera(false);
-      toast.success('Camera ready');
+      toast.success('Camera ready - hold steady');
     } catch (err: any) {
       console.error('Camera error:', err);
       setCameraError(true);
@@ -151,12 +154,15 @@ export default function ScannerView({ onClose, onAddNewProduct }: ScannerViewPro
           <div id="barcode-reader" className="w-full h-full" />
           {!isLoadingCamera && (
             <div className="absolute bottom-8 left-0 right-0 px-4">
-              <div className="bg-black/70 rounded-lg p-4 text-center">
+              <div className="bg-black/80 rounded-lg p-4 text-center">
                 <p className="text-background text-body font-semibold mb-1">
-                  Hold phone 15-20cm from barcode
+                  Hold phone 10-15cm from barcode
                 </p>
-                <p className="text-background/70 text-meta">
-                  Keep steady • Ensure good lighting • Align barcode in center
+                <p className="text-background/80 text-meta">
+                  Keep steady • Good lighting • Center the barcode • Wait for beep
+                </p>
+                <p className="text-background/60 text-xs mt-2">
+                  Scanned number may differ from printed text - this is normal
                 </p>
               </div>
             </div>

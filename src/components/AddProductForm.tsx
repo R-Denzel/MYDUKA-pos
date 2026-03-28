@@ -13,8 +13,8 @@ export default function AddProductForm({ onClose, prefillBarcode }: AddProductFo
   const [name, setName] = useState(prefillBarcode ? `Product ${prefillBarcode.slice(-4)}` : '');
   const [barcode, setBarcode] = useState(prefillBarcode || '');
   const [category, setCategory] = useState<string>(CATEGORIES[0]);
-  const [basePrice, setBasePrice] = useState(prefillBarcode ? '1' : '');
-  const [stock, setStock] = useState(prefillBarcode ? '1' : '');
+  const [basePrice, setBasePrice] = useState('');
+  const [stock, setStock] = useState('');
   const [hasVariants, setHasVariants] = useState(false);
   const [variants, setVariants] = useState<{ name: string; price: string; stock: string }[]>([]);
 
@@ -83,7 +83,7 @@ export default function AddProductForm({ onClose, prefillBarcode }: AddProductFo
         <h1 className="text-section font-semibold">Add Product</h1>
         <button
           onClick={handleSubmit}
-          disabled={!name || !basePrice}
+          disabled={!name.trim() || !basePrice || isNaN(Number(basePrice)) || Number(basePrice) <= 0}
           className="bg-primary text-primary-foreground rounded-lg px-4 py-2 text-body font-semibold active-scale disabled:opacity-40"
         >
           Save
@@ -113,7 +113,7 @@ export default function AddProductForm({ onClose, prefillBarcode }: AddProductFo
             className="w-full bg-card border border-border rounded-lg px-4 py-3 text-body focus:outline-none focus:ring-2 focus:ring-accent"
           />
           {prefillBarcode && (
-            <p className="text-success text-xs mt-1">Scanned barcode: {prefillBarcode}. Enter name and price to save.</p>
+            <p className="text-success text-xs mt-1">✓ Scanned: {prefillBarcode} (This is the internal barcode ID)</p>
           )}
         </div>
 
