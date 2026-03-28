@@ -46,11 +46,16 @@ export default function ScannerView({ onClose, onAddNewProduct }: ScannerViewPro
       scannerRef.current = scanner;
 
       await scanner.start(
-        { facingMode: 'environment' },
         {
-          fps: 30,
-          qrbox: { width: 450, height: 280 },
+          facingMode: { ideal: 'environment' },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+        {
+          fps: 15,
+          qrbox: { width: 360, height: 240 },
           aspectRatio: 1.78,
+          rememberLastUsedCamera: true,
           formatsToSupport: [
             Html5QrcodeSupportedFormats.EAN_13,
             Html5QrcodeSupportedFormats.EAN_8,

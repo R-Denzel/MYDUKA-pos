@@ -10,7 +10,7 @@ interface AddProductFormProps {
 
 export default function AddProductForm({ onClose, prefillBarcode }: AddProductFormProps) {
   const { addProduct } = useStore();
-  const [name, setName] = useState('');
+  const [name, setName] = useState(prefillBarcode ? `Product ${prefillBarcode.slice(-4)}` : '');
   const [barcode, setBarcode] = useState(prefillBarcode || '');
   const [category, setCategory] = useState<string>(CATEGORIES[0]);
   const [basePrice, setBasePrice] = useState(prefillBarcode ? '1' : '');
