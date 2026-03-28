@@ -37,7 +37,7 @@ export default function AddProductForm({ onClose, prefillBarcode }: AddProductFo
     setVariants(variants.map((v, idx) => (idx === i ? { ...v, [field]: value } : v)));
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!name || !basePrice) return;
 
     const productVariants: ProductVariant[] = hasVariants
@@ -65,8 +65,12 @@ export default function AddProductForm({ onClose, prefillBarcode }: AddProductFo
       createdAt: new Date().toISOString(),
     };
 
-    addProduct(product);
-    onClose();
+    try {
+      await addProduct(product);
+      onClose();
+    } catch (err) {
+      console.error('Failed to add product:', err);
+    }
   };
 
   return (
@@ -87,7 +91,7 @@ export default function AddProductForm({ onClose, prefillBarcode }: AddProductFo
       </div>
 
       {/* Form */}
-      <div className="px-4 py-4 space-y-4 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 60px)' }}>
+      <div className="px-4 py-4 space-y-4 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 60px)', WebkitOverflowScrolling: 'touch' }}>
         <div>
           <label className="text-meta text-muted-foreground font-medium block mb-1">Product Name *</label>
           <input
@@ -161,11 +165,13 @@ export default function AddProductForm({ onClose, prefillBarcode }: AddProductFo
             className={`w-12 h-7 rounded-full transition-colors ${
               hasVariants ? 'bg-accent' : 'bg-muted'
             } relative`}
+            style={{ willChange: 'background-color' }}
           >
             <span
-              className={`absolute top-1 w-5 h-5 rounded-full bg-card shadow-card transition-transform ${
+              className={`absolute top-1 w-5 h-5 rounded-full bg-card shadow-card ${
                 hasVariants ? 'left-6' : 'left-1'
               }`}
+              style={{ transition: 'left 0.2s ease-out', willChange: 'left' }}
             />
           </button>
         </div>
