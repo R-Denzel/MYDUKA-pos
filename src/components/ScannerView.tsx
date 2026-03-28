@@ -21,6 +21,8 @@ export default function ScannerView({ onClose, onAddNewProduct }: ScannerViewPro
   const [isLoadingCamera, setIsLoadingCamera] = useState(false);
   const [availableCameras, setAvailableCameras] = useState<CameraDevice[]>([]);
   const [selectedCameraId, setSelectedCameraId] = useState('');
+  const [isTorchSupported, setIsTorchSupported] = useState(false);
+  const [isTorchOn, setIsTorchOn] = useState(false);
   const [isAutoScan, setIsAutoScan] = useState(() => {
     const stored = window.localStorage.getItem(SCAN_MODE_STORAGE_KEY);
     return stored !== 'tap';
@@ -34,6 +36,20 @@ export default function ScannerView({ onClose, onAddNewProduct }: ScannerViewPro
   });
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const hasScanned = useRef(false);
+  const isAutoScanRef = useRef(isAutoScan);
+  const isTapScanArmedRef = useRef(isTapScanArmed);
+  const scanCooldownUntilRef = useRef(0);
+  const lastDecodedRef = useRef('');
+  const lastDecodedAtRef = useRef(0);
+  const tapArmTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    isAutoScanRef.current = isAutoScan;
+  }, [isAutoScan]);
+
+  useEffect(() => {
+    isTapScanArmedRef.current = isTapScanArmed;
+  }, [isTapScanArmed]);
 
   const stopScanner = useCallback(async () => {
     try {
@@ -45,6 +61,37 @@ export default function ScannerView({ onClose, onAddNewProduct }: ScannerViewPro
       // Ignore cleanup errors
     }
   }, []);
+
+  const clearTapArmTimeout = useCallback(() => {
+    if (tapArmTimeoutRef.current) {
+      clearTimeout(tapArmTimeoutRef.current);
+      tapArmTimeoutRef.current = null;
+    }
+  }, []);
+
+  const resetTorchState = useCallback(() => {
+    setIsTorchSupported(false);
+    setIsTorchOn(false);
+  }, []);
+
+  const refreshTorchSupport = useCallback(() => {
+    const scanner = scannerRef.current;
+    if (!scanner) {
+      resetTorchState();
+      return;
+    }
+
+    try {
+      const capabilities = scanner.getRunningTrackCapabilities() as MediaTrackCapabilities | undefined;
+      const supported = Boolean(capabilities && 'torch' in capabilities && capabilities.torch);
+      setIsTorchSupported(supported);
+      if (!supported) {
+        setIsTorchOn(false);
+      }
+    } catch {
+      resetTorchState();
+    }
+  }, [resetTorchState]);
 
   const getPreferredCamera = useCallback((cameras: CameraDevice[], preferredId?: string) => {
     if (!cameras.length) return null;
@@ -101,6 +148,7 @@ export default function ScannerView({ onClose, onAddNewProduct }: ScannerViewPro
       }
 
       await stopScanner();
+      resetTorchState();
 
       const cameras = await Html5Qrcode.getCameras();
       setAvailableCameras(cameras);
@@ -138,14 +186,28 @@ export default function ScannerView({ onClose, onAddNewProduct }: ScannerViewPro
       };
 
       const onScanSuccess = (decodedText: string) => {
-        if (!isAutoScan && !isTapScanArmed) return;
+        const now = Date.now();
+        const cleanedText = decodedText.trim();
+        if (!cleanedText) return;
+
+        if (!isAutoScanRef.current && !isTapScanArmedRef.current) return;
+        if (now < scanCooldownUntilRef.current) return;
+        if (cleanedText === lastDecodedRef.current && now - lastDecodedAtRef.current < 1500) return;
         if (hasScanned.current) return;
+
         hasScanned.current = true;
-        if (!isAutoScan) {
+        if (!isAutoScanRef.current) {
           setIsTapScanArmed(false);
+          isTapScanArmedRef.current = false;
+          clearTapArmTimeout();
         }
+
+        scanCooldownUntilRef.current = now + 1200;
+        lastDecodedRef.current = cleanedText;
+        lastDecodedAtRef.current = now;
+
         navigator.vibrate?.(50);
-        handleLookup(decodedText);
+        handleLookup(cleanedText);
       };
 
       const onScanFailure = () => {
@@ -162,6 +224,8 @@ export default function ScannerView({ onClose, onAddNewProduct }: ScannerViewPro
         await scanner.start({ facingMode: 'environment' }, config, onScanSuccess, onScanFailure);
       }
 
+      refreshTorchSupport();
+
       setIsLoadingCamera(false);
       toast.success('Camera ready - hold steady');
     } catch (err: any) {
@@ -174,11 +238,12 @@ export default function ScannerView({ onClose, onAddNewProduct }: ScannerViewPro
   }, [
     getPreferredCamera,
     handleLookup,
-    isAutoScan,
-    isTapScanArmed,
     scanAreaRatio,
     selectedCameraId,
     stopScanner,
+    clearTapArmTimeout,
+    refreshTorchSupport,
+    resetTorchState,
   ]);
 
   useEffect(() => {
@@ -186,11 +251,13 @@ export default function ScannerView({ onClose, onAddNewProduct }: ScannerViewPro
       void startScanner();
     }
     return () => {
+      clearTapArmTimeout();
       void stopScanner();
     };
-  }, [showManual, startScanner, stopScanner]);
+  }, [showManual, startScanner, stopScanner, clearTapArmTimeout]);
 
   const handleClose = () => {
+    resetTorchState();
     void stopScanner();
     onClose();
   };
@@ -208,8 +275,28 @@ export default function ScannerView({ onClose, onAddNewProduct }: ScannerViewPro
   const handleScanModeChange = (nextMode: 'auto' | 'tap') => {
     const nextIsAuto = nextMode === 'auto';
     setIsAutoScan(nextIsAuto);
+    isAutoScanRef.current = nextIsAuto;
     setIsTapScanArmed(false);
+    isTapScanArmedRef.current = false;
+    clearTapArmTimeout();
     window.localStorage.setItem(SCAN_MODE_STORAGE_KEY, nextMode);
+  };
+
+  const handleToggleTorch = async () => {
+    const scanner = scannerRef.current;
+    if (!scanner || !isTorchSupported) return;
+
+    const nextTorch = !isTorchOn;
+    try {
+      await scanner.applyVideoConstraints({
+        advanced: [{ torch: nextTorch } as MediaTrackConstraintSet],
+      });
+      setIsTorchOn(nextTorch);
+    } catch {
+      toast.error('Torch not available on this camera');
+      setIsTorchOn(false);
+      setIsTorchSupported(false);
+    }
   };
 
   return (
@@ -285,14 +372,38 @@ export default function ScannerView({ onClose, onAddNewProduct }: ScannerViewPro
                       onClick={() => {
                         hasScanned.current = false;
                         setIsTapScanArmed(true);
+                        isTapScanArmedRef.current = true;
+                        clearTapArmTimeout();
+                        tapArmTimeoutRef.current = setTimeout(() => {
+                          isTapScanArmedRef.current = false;
+                          setIsTapScanArmed(false);
+                        }, 6000);
                         toast.info('Scanner armed for one barcode');
                       }}
                       className="mt-2 w-full rounded-md px-3 py-2 text-xs font-semibold border border-background/20 bg-background/10 text-background"
                     >
-                      {isTapScanArmed ? 'Ready: point at barcode' : 'Arm scanner'}
+                      {isTapScanArmed ? 'Ready (6s): point at barcode' : 'Arm scanner'}
                     </button>
                   )}
                 </div>
+
+                {isTorchSupported && (
+                  <div className="mt-3 text-left">
+                    <div className="block text-background/70 text-xs mb-1">Flash</div>
+                    <button
+                      onClick={() => {
+                        void handleToggleTorch();
+                      }}
+                      className={`w-full rounded-md px-3 py-2 text-xs font-semibold border ${
+                        isTorchOn
+                          ? 'bg-accent text-accent-foreground border-accent'
+                          : 'bg-background/10 text-background border-background/20'
+                      }`}
+                    >
+                      {isTorchOn ? 'Torch On' : 'Torch Off'}
+                    </button>
+                  </div>
+                )}
 
                 {availableCameras.length > 1 && (
                   <div className="mt-3 text-left">
