@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { useStore } from '@/store/useStore';
 import { X, Keyboard, Camera, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
-import { Html5Qrcode, Html5QrcodeSupportedFormats, CameraDevice } from 'html5-qrcode';
+import type { CameraDevice, Html5Qrcode as Html5QrcodeInstance } from 'html5-qrcode';
 
 interface ScannerViewProps {
   onClose: () => void;
@@ -10,88 +10,44 @@ interface ScannerViewProps {
 }
 
 const LAST_CAMERA_STORAGE_KEY = 'duka-pos-last-camera-id';
-const SCAN_AREA_STORAGE_KEY = 'duka-pos-scan-area-ratio';
-const SCAN_MODE_STORAGE_KEY = 'duka-pos-scan-mode';
 
 export default function ScannerView({ onClose, onAddNewProduct }: ScannerViewProps) {
   const { getProductByBarcode, addToCart } = useStore();
   const [manualCode, setManualCode] = useState('');
   const [showManual, setShowManual] = useState(false);
   const [cameraError, setCameraError] = useState(false);
+  const [cameraUnsupported, setCameraUnsupported] = useState(false);
   const [isLoadingCamera, setIsLoadingCamera] = useState(false);
   const [availableCameras, setAvailableCameras] = useState<CameraDevice[]>([]);
   const [selectedCameraId, setSelectedCameraId] = useState('');
-  const [isTorchSupported, setIsTorchSupported] = useState(false);
-  const [isTorchOn, setIsTorchOn] = useState(false);
-  const [isAutoScan, setIsAutoScan] = useState(() => {
-    const stored = window.localStorage.getItem(SCAN_MODE_STORAGE_KEY);
-    return stored !== 'tap';
-  });
-  const [isTapScanArmed, setIsTapScanArmed] = useState(false);
-  const [scanAreaRatio, setScanAreaRatio] = useState(() => {
-    const stored = window.localStorage.getItem(SCAN_AREA_STORAGE_KEY);
-    const parsed = stored ? Number.parseFloat(stored) : 0.6;
-    if (Number.isNaN(parsed)) return 0.6;
-    return Math.min(0.9, Math.max(0.4, parsed));
-  });
-  const scannerRef = useRef<Html5Qrcode | null>(null);
+  const scannerRef = useRef<Html5QrcodeInstance | null>(null);
   const hasScanned = useRef(false);
-  const isAutoScanRef = useRef(isAutoScan);
-  const isTapScanArmedRef = useRef(isTapScanArmed);
   const scanCooldownUntilRef = useRef(0);
   const lastDecodedRef = useRef('');
   const lastDecodedAtRef = useRef(0);
-  const tapArmTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    isAutoScanRef.current = isAutoScan;
-  }, [isAutoScan]);
-
-  useEffect(() => {
-    isTapScanArmedRef.current = isTapScanArmed;
-  }, [isTapScanArmed]);
 
   const stopScanner = useCallback(async () => {
-    try {
-      if (scannerRef.current?.isScanning) {
-        await scannerRef.current.stop();
-      }
-      scannerRef.current?.clear();
-    } catch {
-      // Ignore cleanup errors
-    }
-  }, []);
-
-  const clearTapArmTimeout = useCallback(() => {
-    if (tapArmTimeoutRef.current) {
-      clearTimeout(tapArmTimeoutRef.current);
-      tapArmTimeoutRef.current = null;
-    }
-  }, []);
-
-  const resetTorchState = useCallback(() => {
-    setIsTorchSupported(false);
-    setIsTorchOn(false);
-  }, []);
-
-  const refreshTorchSupport = useCallback(() => {
     const scanner = scannerRef.current;
-    if (!scanner) {
-      resetTorchState();
-      return;
+    scannerRef.current = null;
+
+    if (!scanner) return;
+
+    try {
+      if (scanner.isScanning) {
+        await scanner.stop();
+      }
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === 'AbortError')) {
+        console.warn('Scanner stop warning:', error);
+      }
     }
 
     try {
-      const capabilities = scanner.getRunningTrackCapabilities() as MediaTrackCapabilities | undefined;
-      const supported = Boolean(capabilities && 'torch' in capabilities && capabilities.torch);
-      setIsTorchSupported(supported);
-      if (!supported) {
-        setIsTorchOn(false);
-      }
+      scanner.clear();
     } catch {
-      resetTorchState();
+      // Ignore cleanup errors after stop
     }
-  }, [resetTorchState]);
+  }, []);
 
   const getPreferredCamera = useCallback((cameras: CameraDevice[], preferredId?: string) => {
     if (!cameras.length) return null;
@@ -113,9 +69,9 @@ export default function ScannerView({ onClose, onAddNewProduct }: ScannerViewPro
 
   const handleLookup = useCallback(
     (code: string) => {
-      if (!code.trim()) return;
-
       const cleanedCode = code.trim();
+      if (!cleanedCode) return;
+
       const product = getProductByBarcode(cleanedCode);
       if (product) {
         addToCart({
@@ -142,13 +98,26 @@ export default function ScannerView({ onClose, onAddNewProduct }: ScannerViewPro
       hasScanned.current = false;
       setIsLoadingCamera(true);
       setCameraError(false);
+      setCameraUnsupported(false);
 
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        throw new Error('Camera API not available');
+      const hasCameraSupport =
+        typeof window !== 'undefined' &&
+        window.isSecureContext &&
+        !!navigator.mediaDevices &&
+        typeof navigator.mediaDevices.getUserMedia === 'function';
+
+      if (!hasCameraSupport) {
+        setCameraUnsupported(true);
+        setCameraError(true);
+        setShowManual(true);
+        setIsLoadingCamera(false);
+        toast.error('Scan unavailable on this browser — switched to manual entry');
+        return;
       }
 
+      const { Html5Qrcode, Html5QrcodeSupportedFormats } = await import('html5-qrcode');
+
       await stopScanner();
-      resetTorchState();
 
       const cameras = await Html5Qrcode.getCameras();
       setAvailableCameras(cameras);
@@ -159,17 +128,15 @@ export default function ScannerView({ onClose, onAddNewProduct }: ScannerViewPro
         window.localStorage.setItem(LAST_CAMERA_STORAGE_KEY, preferredCamera.id);
       }
 
-      const viewportBase = Math.min(window.innerWidth, window.innerHeight);
-      const qrboxSize = Math.min(420, Math.max(180, Math.round(viewportBase * scanAreaRatio)));
-
       const scanner = new Html5Qrcode('barcode-reader');
       scannerRef.current = scanner;
 
       const config = {
-        fps: 10,
-        qrbox: {
-          width: qrboxSize,
-          height: qrboxSize,
+        fps: 12,
+        qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
+          const width = Math.min(Math.floor(viewfinderWidth * 0.82), 420);
+          const height = Math.min(Math.max(Math.floor(viewfinderHeight * 0.18), 120), 180);
+          return { width, height };
         },
         disableFlip: false,
         formatsToSupport: [
@@ -189,29 +156,20 @@ export default function ScannerView({ onClose, onAddNewProduct }: ScannerViewPro
         const now = Date.now();
         const cleanedText = decodedText.trim();
         if (!cleanedText) return;
-
-        if (!isAutoScanRef.current && !isTapScanArmedRef.current) return;
+        if (hasScanned.current) return;
         if (now < scanCooldownUntilRef.current) return;
         if (cleanedText === lastDecodedRef.current && now - lastDecodedAtRef.current < 1500) return;
-        if (hasScanned.current) return;
 
         hasScanned.current = true;
-        if (!isAutoScanRef.current) {
-          setIsTapScanArmed(false);
-          isTapScanArmedRef.current = false;
-          clearTapArmTimeout();
-        }
-
         scanCooldownUntilRef.current = now + 1200;
         lastDecodedRef.current = cleanedText;
         lastDecodedAtRef.current = now;
-
         navigator.vibrate?.(50);
         handleLookup(cleanedText);
       };
 
       const onScanFailure = () => {
-        // Ignore frame-by-frame scanning failures - these are normal
+        // Frame misses are expected during live scanning.
       };
 
       if (preferredCamera) {
@@ -224,10 +182,8 @@ export default function ScannerView({ onClose, onAddNewProduct }: ScannerViewPro
         await scanner.start({ facingMode: 'environment' }, config, onScanSuccess, onScanFailure);
       }
 
-      refreshTorchSupport();
-
       setIsLoadingCamera(false);
-      toast.success('Camera ready - hold steady');
+      toast.success('Camera ready - align barcode inside the frame');
     } catch (err: any) {
       console.error('Camera error:', err);
       setCameraError(true);
@@ -235,68 +191,30 @@ export default function ScannerView({ onClose, onAddNewProduct }: ScannerViewPro
       setIsLoadingCamera(false);
       toast.error(err?.message || 'Camera unavailable');
     }
-  }, [
-    getPreferredCamera,
-    handleLookup,
-    scanAreaRatio,
-    selectedCameraId,
-    stopScanner,
-    clearTapArmTimeout,
-    refreshTorchSupport,
-    resetTorchState,
-  ]);
+  }, [getPreferredCamera, handleLookup, selectedCameraId, stopScanner]);
 
   useEffect(() => {
     if (!showManual) {
       void startScanner();
     }
+
     return () => {
-      clearTapArmTimeout();
       void stopScanner();
     };
-  }, [showManual, startScanner, stopScanner, clearTapArmTimeout]);
+  }, [showManual, startScanner, stopScanner]);
 
   const handleClose = () => {
-    resetTorchState();
     void stopScanner();
     onClose();
   };
 
-  const handleCameraSelection = (cameraId: string) => {
-    setSelectedCameraId(cameraId);
-    window.localStorage.setItem(LAST_CAMERA_STORAGE_KEY, cameraId);
-  };
-
-  const handleScanAreaChange = (value: number) => {
-    setScanAreaRatio(value);
-    window.localStorage.setItem(SCAN_AREA_STORAGE_KEY, value.toString());
-  };
-
-  const handleScanModeChange = (nextMode: 'auto' | 'tap') => {
-    const nextIsAuto = nextMode === 'auto';
-    setIsAutoScan(nextIsAuto);
-    isAutoScanRef.current = nextIsAuto;
-    setIsTapScanArmed(false);
-    isTapScanArmedRef.current = false;
-    clearTapArmTimeout();
-    window.localStorage.setItem(SCAN_MODE_STORAGE_KEY, nextMode);
-  };
-
-  const handleToggleTorch = async () => {
-    const scanner = scannerRef.current;
-    if (!scanner || !isTorchSupported) return;
-
-    const nextTorch = !isTorchOn;
-    try {
-      await scanner.applyVideoConstraints({
-        advanced: [{ torch: nextTorch } as MediaTrackConstraintSet],
-      });
-      setIsTorchOn(nextTorch);
-    } catch {
-      toast.error('Torch not available on this camera');
-      setIsTorchOn(false);
-      setIsTorchSupported(false);
-    }
+  const handleSwitchCamera = () => {
+    if (availableCameras.length < 2) return;
+    const currentIndex = availableCameras.findIndex((camera) => camera.id === selectedCameraId);
+    const nextCamera = availableCameras[(currentIndex + 1 + availableCameras.length) % availableCameras.length];
+    setSelectedCameraId(nextCamera.id);
+    window.localStorage.setItem(LAST_CAMERA_STORAGE_KEY, nextCamera.id);
+    toast.info(`Switched to ${nextCamera.label || 'next camera'}`);
   };
 
   return (
@@ -305,7 +223,10 @@ export default function ScannerView({ onClose, onAddNewProduct }: ScannerViewPro
         <button onClick={handleClose} className="touch-target flex items-center justify-center active-scale">
           <X className="w-6 h-6 text-background" />
         </button>
-        <h1 className="text-body font-semibold text-background">Scan Barcode</h1>
+        <div className="text-center">
+          <h1 className="text-body font-semibold text-background">Scan Barcode</h1>
+          <p className="text-xs text-background/65">Auto scan mode</p>
+        </div>
         <button
           onClick={() => {
             if (showManual) {
@@ -316,136 +237,62 @@ export default function ScannerView({ onClose, onAddNewProduct }: ScannerViewPro
           }}
           className="touch-target flex items-center justify-center active-scale"
         >
-          {showManual ? (
-            <Camera className="w-5 h-5 text-background" />
-          ) : (
-            <Keyboard className="w-5 h-5 text-background" />
-          )}
+          {showManual ? <Camera className="w-5 h-5 text-background" /> : <Keyboard className="w-5 h-5 text-background" />}
         </button>
       </div>
 
       {!showManual && !cameraError && (
-        <div className="flex-1 relative flex flex-col items-center justify-center bg-black">
+        <div className="flex-1 relative bg-black overflow-hidden">
+          <div id="barcode-reader" className="absolute inset-0" />
+
           {isLoadingCamera && (
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center">
-              <p className="text-background text-body font-semibold">Starting camera...</p>
-              <p className="text-background/60 text-meta mt-2">Please allow camera access if prompted</p>
+            <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/80 text-center px-6">
+              <div>
+                <p className="text-background text-body font-semibold">Starting camera...</p>
+                <p className="text-background/60 text-meta mt-2">Please allow camera access if prompted</p>
+              </div>
             </div>
           )}
 
-          <div id="barcode-reader" className="w-full h-full" />
-
           {!isLoadingCamera && (
-            <div className="absolute bottom-8 left-0 right-0 px-4">
-              <div className="bg-black/80 rounded-lg p-4 text-center">
-                <p className="text-background text-body font-semibold mb-1">Hold phone 10-15cm from barcode</p>
-                <p className="text-background/80 text-meta">Keep steady • Good lighting • Center the barcode • Wait for beep</p>
-                <p className="text-background/60 text-xs mt-2">Scanned number may differ from printed text - this is normal</p>
+            <>
+              <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center px-6">
+                <div className="relative h-36 w-full max-w-sm rounded-2xl border-2 border-accent/90 shadow-[0_0_0_9999px_rgba(0,0,0,0.45)]">
+                  <div className="absolute inset-x-4 top-1/2 h-0.5 -translate-y-1/2 bg-accent/80" />
+                </div>
+              </div>
 
-                <div className="mt-3 text-left">
-                  <div className="block text-background/70 text-xs mb-1">Scan mode</div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      onClick={() => handleScanModeChange('auto')}
-                      className={`rounded-md px-3 py-2 text-xs font-semibold border ${
-                        isAutoScan
-                          ? 'bg-accent text-accent-foreground border-accent'
-                          : 'bg-background/10 text-background border-background/20'
-                      }`}
-                    >
-                      Auto
-                    </button>
-                    <button
-                      onClick={() => handleScanModeChange('tap')}
-                      className={`rounded-md px-3 py-2 text-xs font-semibold border ${
-                        !isAutoScan
-                          ? 'bg-accent text-accent-foreground border-accent'
-                          : 'bg-background/10 text-background border-background/20'
-                      }`}
-                    >
-                      Tap to scan
-                    </button>
-                  </div>
+              <div className="absolute bottom-6 left-0 right-0 z-20 px-4">
+                <div className="bg-black/75 rounded-xl p-4 text-center backdrop-blur-sm">
+                  <p className="text-background text-body font-semibold">Align barcode inside the frame</p>
+                  <p className="text-background/75 text-meta mt-1">Keep the phone steady and move slightly closer if needed</p>
 
-                  {!isAutoScan && (
+                  {availableCameras.length > 1 && (
                     <button
-                      onClick={() => {
-                        hasScanned.current = false;
-                        setIsTapScanArmed(true);
-                        isTapScanArmedRef.current = true;
-                        clearTapArmTimeout();
-                        tapArmTimeoutRef.current = setTimeout(() => {
-                          isTapScanArmedRef.current = false;
-                          setIsTapScanArmed(false);
-                        }, 6000);
-                        toast.info('Scanner armed for one barcode');
-                      }}
-                      className="mt-2 w-full rounded-md px-3 py-2 text-xs font-semibold border border-background/20 bg-background/10 text-background"
+                      onClick={handleSwitchCamera}
+                      className="mt-3 inline-flex items-center gap-2 rounded-lg border border-background/20 bg-background/10 px-4 py-2 text-xs font-semibold text-background"
                     >
-                      {isTapScanArmed ? 'Ready (6s): point at barcode' : 'Arm scanner'}
+                      <RotateCcw className="h-4 w-4" />
+                      Switch camera
                     </button>
                   )}
                 </div>
-
-                {isTorchSupported && (
-                  <div className="mt-3 text-left">
-                    <div className="block text-background/70 text-xs mb-1">Flash</div>
-                    <button
-                      onClick={() => {
-                        void handleToggleTorch();
-                      }}
-                      className={`w-full rounded-md px-3 py-2 text-xs font-semibold border ${
-                        isTorchOn
-                          ? 'bg-accent text-accent-foreground border-accent'
-                          : 'bg-background/10 text-background border-background/20'
-                      }`}
-                    >
-                      {isTorchOn ? 'Torch On' : 'Torch Off'}
-                    </button>
-                  </div>
-                )}
-
-                {availableCameras.length > 1 && (
-                  <div className="mt-3 text-left">
-                    <label className="block text-background/70 text-xs mb-1">Camera</label>
-                    <select
-                      value={selectedCameraId}
-                      onChange={(e) => handleCameraSelection(e.target.value)}
-                      className="w-full bg-background/10 border border-background/20 rounded-md px-3 py-2 text-sm text-background"
-                    >
-                      {availableCameras.map((camera) => (
-                        <option key={camera.id} value={camera.id} className="text-foreground bg-background">
-                          {camera.label || `Camera ${camera.id.slice(0, 4)}`}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-
-                <div className="mt-3 text-left">
-                  <div className="flex items-center justify-between text-xs text-background/70 mb-1">
-                    <span>Scan area</span>
-                    <span>{Math.round(scanAreaRatio * 100)}%</span>
-                  </div>
-                  <input
-                    type="range"
-                    min={0.4}
-                    max={0.9}
-                    step={0.05}
-                    value={scanAreaRatio}
-                    onChange={(e) => handleScanAreaChange(Number.parseFloat(e.target.value))}
-                    className="w-full"
-                  />
-                </div>
               </div>
-            </div>
+            </>
           )}
         </div>
       )}
 
       {(showManual || cameraError) && (
         <div className="flex-1 flex flex-col items-center justify-center px-6 space-y-4">
-          {cameraError && (
+          {cameraUnsupported && (
+            <div className="w-full rounded-lg border border-background/20 bg-background/10 px-4 py-3 text-center">
+              <p className="text-background text-sm font-semibold">Scan unavailable → using manual entry</p>
+              <p className="text-background/60 text-xs mt-1">Use HTTPS (or localhost) and a modern camera-enabled browser for live scan.</p>
+            </div>
+          )}
+
+          {cameraError && !cameraUnsupported && (
             <>
               <p className="text-background/80 text-body font-semibold text-center">Camera Access Required</p>
               <p className="text-background/60 text-meta text-center">
