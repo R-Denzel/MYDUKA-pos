@@ -1,11 +1,10 @@
 import { useStore } from '@/store/useStore';
 import { useMemo } from 'react';
 import { TrendingUp, Award, Package } from 'lucide-react';
-
-const formatUGX = (amount: number) => `UGX ${amount.toLocaleString('en-UG')}`;
+import { formatCurrency } from '@/lib/currency';
 
 export default function Reports() {
-  const { sales, products } = useStore();
+  const { sales, products, displayCurrency, exchangeRates } = useStore();
 
   const stats = useMemo(() => {
     const now = new Date();
@@ -43,11 +42,18 @@ export default function Reports() {
   }, [sales, products]);
 
   return (
-    <div className="px-4 pt-4 pb-32 space-y-4">
-      <h1 className="text-section font-bold">Reports</h1>
+    <div className="space-y-7 px-4 pb-32 pt-7 sm:px-6 lg:px-8 lg:pt-10">
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-wide text-primary">Numbers that move you forward</p>
+        <h1 className="mt-1 text-2xl font-extrabold tracking-tight sm:text-3xl">Reports</h1>
+        <p className="mt-1 text-sm text-muted-foreground">Sales performance and inventory health.</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Totals are shown using {displayCurrency} at the saved exchange rate. Recorded values remain in UGX.
+        </p>
+      </div>
 
       {/* Period Stats */}
-      <div className="space-y-2">
+      <div className="grid gap-3 md:grid-cols-3">
         {[
           { label: 'Today', ...stats.today },
           { label: 'This Week', ...stats.week },
@@ -55,11 +61,13 @@ export default function Reports() {
         ].map((period) => (
           <div
             key={period.label}
-            className="bg-card rounded-lg p-4 shadow-card border border-border flex items-center justify-between"
+            className="flex items-center justify-between rounded-2xl border border-border bg-card p-5 shadow-card"
           >
             <div>
-              <p className="text-meta text-muted-foreground font-medium">{period.label}</p>
-              <p className="text-section font-bold tabular-nums">{formatUGX(period.total)}</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{period.label}</p>
+              <p className="mt-2 text-xl font-extrabold tracking-tight tabular-nums">
+                {formatCurrency(period.total, displayCurrency, exchangeRates)}
+              </p>
             </div>
             <div className="text-right">
               <div className="flex items-center gap-1 text-primary">
@@ -82,7 +90,7 @@ export default function Reports() {
           {stats.topSellers.map((item, i) => {
             const maxQty = stats.topSellers[0]?.qty || 1;
             return (
-              <div key={i} className="bg-card rounded-lg p-3 shadow-card border border-border">
+              <div key={`${item.name}-${i}`} className="rounded-2xl border border-border bg-card p-4 shadow-card">
                 <div className="flex items-center justify-between mb-2">
                   <p className="text-body font-medium truncate flex-1">{item.name}</p>
                   <p className="text-meta font-bold tabular-nums text-primary ml-2">
@@ -106,12 +114,12 @@ export default function Reports() {
       <div className="space-y-2">
         <h2 className="text-section font-semibold">Inventory Summary</h2>
         <div className="grid grid-cols-2 gap-3">
-          <div className="bg-card rounded-lg p-4 shadow-card border border-border">
+          <div className="rounded-2xl border border-border bg-card p-5 shadow-card">
             <Package className="w-5 h-5 text-accent mb-1" />
             <p className="text-total font-bold tabular-nums">{stats.totalProducts}</p>
             <p className="text-meta text-muted-foreground">Products</p>
           </div>
-          <div className="bg-card rounded-lg p-4 shadow-card border border-border">
+          <div className="rounded-2xl border border-border bg-card p-5 shadow-card">
             <Package className="w-5 h-5 text-destructive mb-1" />
             <p className="text-total font-bold tabular-nums">{stats.lowStock}</p>
             <p className="text-meta text-muted-foreground">Low Stock</p>
@@ -120,10 +128,10 @@ export default function Reports() {
       </div>
 
       {sales.length === 0 && (
-        <div className="text-center py-8">
-          <TrendingUp className="w-12 h-12 text-muted-foreground mx-auto mb-3" />
-          <p className="text-body font-medium">No sales yet</p>
-          <p className="text-meta text-muted-foreground mt-1">
+        <div className="rounded-3xl border border-dashed border-border bg-card px-6 py-12 text-center">
+          <TrendingUp className="mx-auto mb-3 h-10 w-10 text-muted-foreground" />
+          <p className="text-sm font-semibold">Your sales story starts here</p>
+          <p className="mt-1 text-sm text-muted-foreground">
             Start selling to see your reports here
           </p>
         </div>

@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useStore } from '@/store/useStore';
 import { Product, ProductVariant, CATEGORIES } from '@/types/pos';
-import { X, Plus, Trash2 } from 'lucide-react';
+import { X, Plus, ScanBarcode, Trash2 } from 'lucide-react';
+import ScannerView from '@/components/ScannerView';
 
 interface AddProductFormProps {
   onClose: () => void;
@@ -17,6 +18,11 @@ export default function AddProductForm({ onClose, prefillBarcode }: AddProductFo
   const [stock, setStock] = useState('');
   const [hasVariants, setHasVariants] = useState(false);
   const [variants, setVariants] = useState<{ name: string; price: string; stock: string }[]>([]);
+  const [showBarcodeScanner, setShowBarcodeScanner] = useState(false);
+
+  const handleBarcodeDetected = useCallback((scannedBarcode: string) => {
+    setBarcode(scannedBarcode);
+  }, []);
 
   const uuid = () => {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -105,15 +111,27 @@ export default function AddProductForm({ onClose, prefillBarcode }: AddProductFo
 
         <div>
           <label className="text-meta text-muted-foreground font-medium block mb-1">Barcode</label>
-          <input
-            type="text"
-            value={barcode}
-            onChange={(e) => setBarcode(e.target.value)}
-            placeholder="Scan or enter barcode (optional)"
-            className="w-full bg-card border border-border rounded-lg px-4 py-3 text-body focus:outline-none focus:ring-2 focus:ring-accent"
-          />
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={barcode}
+              onChange={(e) => setBarcode(e.target.value)}
+              placeholder="Scan or enter barcode (optional)"
+              className="min-w-0 flex-1 bg-card border border-border rounded-lg px-4 py-3 text-body focus:outline-none focus:ring-2 focus:ring-accent"
+            />
+            <button
+              type="button"
+              onClick={() => setShowBarcodeScanner(true)}
+              aria-label="Scan barcode"
+              title="Scan barcode"
+              className="touch-target flex shrink-0 items-center justify-center gap-2 rounded-lg border border-border bg-card px-3 text-foreground active-scale"
+            >
+              <ScanBarcode className="h-5 w-5" />
+              <span className="hidden text-sm font-medium sm:inline">Scan</span>
+            </button>
+          </div>
           {prefillBarcode && (
-            <p className="text-success text-xs mt-1">✓ Scanned: {prefillBarcode} (This is the internal barcode ID)</p>
+            <p className="text-success text-xs mt-1">✓ Scanned barcode: {prefillBarcode}</p>
           )}
         </div>
 
@@ -224,6 +242,12 @@ export default function AddProductForm({ onClose, prefillBarcode }: AddProductFo
           </div>
         )}
       </div>
+      {showBarcodeScanner && (
+        <ScannerView
+          onClose={() => setShowBarcodeScanner(false)}
+          onBarcodeDetected={handleBarcodeDetected}
+        />
+      )}
     </div>
   );
 }

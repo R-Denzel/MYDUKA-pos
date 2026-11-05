@@ -3,11 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { X, Minus, Plus, Banknote, Smartphone, CreditCard, CheckCircle2 } from 'lucide-react';
 import { useState } from 'react';
 import { PaymentMethod } from '@/types/pos';
-
-const formatUGX = (amount?: number) => {
-  const safeAmount = Number(amount || 0);
-  return `UGX ${safeAmount.toLocaleString('en-UG')}`;
-};
+import { formatCurrency } from '@/lib/currency';
 
 interface CartSheetProps {
   open: boolean;
@@ -15,7 +11,16 @@ interface CartSheetProps {
 }
 
 export default function CartSheet({ open, onClose }: CartSheetProps) {
-  const { cart, cartTotal, updateCartQty, removeFromCart, completeSale, clearCart } = useStore();
+  const {
+    cart,
+    cartTotal,
+    updateCartQty,
+    removeFromCart,
+    completeSale,
+    clearCart,
+    displayCurrency,
+    exchangeRates,
+  } = useStore();
   const [showPayment, setShowPayment] = useState(false);
   const [saleComplete, setSaleComplete] = useState(false);
   const [completedTotal, setCompletedTotal] = useState(0);
@@ -65,7 +70,7 @@ export default function CartSheet({ open, onClose }: CartSheetProps) {
             animate={{ y: 0 }}
             exit={{ y: '100%' }}
             transition={{ type: 'spring', damping: 30, stiffness: 300 }}
-            className="fixed bottom-0 left-0 right-0 z-50 bg-card rounded-t-2xl shadow-modal max-h-[85vh] flex flex-col safe-bottom"
+            className="safe-bottom fixed bottom-0 left-0 right-0 z-50 mx-auto flex max-h-[85vh] w-full max-w-2xl flex-col rounded-t-3xl border border-border bg-card shadow-modal md:bottom-4 md:rounded-3xl"
           >
             {/* Handle */}
             <div className="flex justify-center py-2">
@@ -78,7 +83,7 @@ export default function CartSheet({ open, onClose }: CartSheetProps) {
                 <CheckCircle2 className="w-16 h-16 text-primary mb-4" />
                 <h2 className="text-section font-bold mb-1">Sale Complete</h2>
                 <p className="text-total font-bold tabular-nums text-primary mb-6">
-                  {formatUGX(completedTotal)}
+                  {formatCurrency(completedTotal, displayCurrency, exchangeRates)}
                 </p>
                 <button
                   onClick={handleNewSale}
@@ -140,7 +145,7 @@ export default function CartSheet({ open, onClose }: CartSheetProps) {
                           <p className="text-meta text-muted-foreground">{item.variantName}</p>
                         )}
                         <p className="text-meta font-semibold tabular-nums mt-0.5">
-                          {formatUGX(item.price)}
+                          {formatCurrency(item.price, displayCurrency, exchangeRates)}
                         </p>
                       </div>
                       <div className="flex items-center gap-2">
@@ -181,8 +186,11 @@ export default function CartSheet({ open, onClose }: CartSheetProps) {
                       onClick={() => setShowPayment(true)}
                       className="w-full bg-primary text-primary-foreground rounded-lg py-4 text-body font-bold active-scale touch-target"
                     >
-                      Charge {formatUGX(total)}
+                      Charge {formatCurrency(total, displayCurrency, exchangeRates)}
                     </button>
+                    <p className="mt-2 text-center text-xs text-muted-foreground">
+                      Approximate display conversion · recorded in UGX
+                    </p>
                   </div>
                 )}
               </>

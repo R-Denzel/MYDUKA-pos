@@ -13,6 +13,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Product, CartItem, Sale, PaymentMethod } from '@/types/pos';
+import { ExchangeRates, FALLBACK_EXCHANGE_RATES, Currency } from '@/lib/currency';
 
 interface POSStore {
   loadProductsFromFirestore: () => Promise<void>;
@@ -40,6 +41,11 @@ interface POSStore {
   // UI
   activeTab: string;
   setActiveTab: (tab: string) => void;
+  displayCurrency: Currency;
+  setDisplayCurrency: (currency: Currency) => void;
+  exchangeRates: ExchangeRates;
+  ratesUpdatedAt: string | null;
+  setExchangeRates: (rates: ExchangeRates, updatedAt: string) => void;
 }
 
 export const useStore = create<POSStore>()(
@@ -49,6 +55,9 @@ export const useStore = create<POSStore>()(
       cart: [],
       sales: [],
       activeTab: 'home',
+      displayCurrency: 'UGX',
+      exchangeRates: FALLBACK_EXCHANGE_RATES,
+      ratesUpdatedAt: null,
 
       addProduct: async (product) => {
         set((s) => ({ products: [...s.products, product] }));
@@ -227,6 +236,9 @@ export const useStore = create<POSStore>()(
       },
 
       setActiveTab: (tab) => set({ activeTab: tab }),
+      setDisplayCurrency: (currency) => set({ displayCurrency: currency }),
+      setExchangeRates: (exchangeRates, ratesUpdatedAt) =>
+        set({ exchangeRates, ratesUpdatedAt }),
     }),
     {
       name: 'duka-pos-storage',

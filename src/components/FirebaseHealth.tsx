@@ -36,7 +36,7 @@ export default function FirebaseHealth() {
     status === 'ok' ? 'text-success' : status === 'fail' ? 'text-destructive' : 'text-muted-foreground';
 
   return (
-    <div className={`inline-flex items-center gap-2 p-2 rounded-lg bg-card border border-border ${color}`}>
+    <div className={`inline-flex w-fit items-center gap-2 rounded-full border border-border bg-card px-3 py-2 shadow-card ${color}`}>
       <span className="text-meta">{label}</span>
     </div>
   );
