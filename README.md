@@ -47,3 +47,8 @@ Kenya, or custom), percentage, and inclusive/exclusive treatment are
 configurable in Owner settings. Package
 options (such as carton, pack, or bottle) each use their own price and stock.
 Report downloads are PDF; Code 128 barcode labels use the browser print dialog.
+The scanner offers an optional **Try Quagga2** camera mode for testing common
+1D retail barcodes alongside the standard scanner. Quagga2 mode does not read
+QR codes and should be compared on the target devices before choosing it as the
+default; switch back to **Use standard** for QR scanning, flashlight, and zoom
+controls.

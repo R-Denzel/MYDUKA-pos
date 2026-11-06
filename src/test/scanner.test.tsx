@@ -16,6 +16,21 @@ const scannerMocks = vi.hoisted(() => ({
   onFailure: null as null | (() => void),
 }));
 
+const quaggaMocks = vi.hoisted(() => ({
+  init: vi.fn(),
+  start: vi.fn(),
+  stop: vi.fn(),
+  release: vi.fn(),
+  onDetected: vi.fn(),
+  offDetected: vi.fn(),
+  onProcessed: vi.fn(),
+  offProcessed: vi.fn(),
+  enumerateVideoDevices: vi.fn(),
+  getActiveTrack: vi.fn(),
+  detectedCallback: null as null | ((result: { codeResult: { code: string | null } }) => void),
+  processedCallback: null as null | ((result: { codeResult?: { code: string | null } }) => void),
+}));
+
 const storeMocks = vi.hoisted(() => ({
   getProductByBarcode: vi.fn(),
   addToCart: vi.fn(),
@@ -100,6 +115,35 @@ vi.mock('html5-qrcode', () => {
   };
 });
 
+vi.mock('@ericblade/quagga2', () => ({
+  default: {
+    init: quaggaMocks.init,
+    start: quaggaMocks.start,
+    stop: quaggaMocks.stop,
+    onDetected: (callback: typeof quaggaMocks.detectedCallback) => {
+      quaggaMocks.detectedCallback = callback;
+      quaggaMocks.onDetected(callback);
+    },
+    offDetected: () => {
+      quaggaMocks.detectedCallback = null;
+      quaggaMocks.offDetected();
+    },
+    onProcessed: (callback: typeof quaggaMocks.processedCallback) => {
+      quaggaMocks.processedCallback = callback;
+      quaggaMocks.onProcessed(callback);
+    },
+    offProcessed: () => {
+      quaggaMocks.processedCallback = null;
+      quaggaMocks.offProcessed();
+    },
+    CameraAccess: {
+      release: quaggaMocks.release,
+      enumerateVideoDevices: quaggaMocks.enumerateVideoDevices,
+      getActiveTrack: quaggaMocks.getActiveTrack,
+    },
+  },
+}));
+
 vi.mock('@/store/useStore', () => ({
   useStore: (selector?: (state: typeof storeMocks) => unknown) =>
     selector ? selector(storeMocks) : storeMocks,
@@ -130,13 +174,26 @@ describe('ScannerView', () => {
     scannerMocks.nativeDetectorEnabled = true;
     scannerMocks.videoConstraints = null;
     scannerMocks.formats = [];
+    quaggaMocks.detectedCallback = null;
+    quaggaMocks.processedCallback = null;
+    quaggaMocks.init.mockResolvedValue(undefined);
+    quaggaMocks.start.mockReset();
+    quaggaMocks.stop.mockResolvedValue(undefined);
+    quaggaMocks.release.mockResolvedValue(undefined);
+    quaggaMocks.enumerateVideoDevices.mockResolvedValue([]);
+    quaggaMocks.getActiveTrack.mockReturnValue(null);
     scannerMocks.getCameras.mockResolvedValue([{ id: 'rear', label: 'Back camera' }]);
     storeMocks.getProductByBarcode.mockReturnValue(product);
     storeMocks.addProduct.mockResolvedValue(undefined);
     Object.defineProperty(window, 'isSecureContext', { configurable: true, value: true });
     Object.defineProperty(navigator, 'mediaDevices', {
       configurable: true,
-      value: { getUserMedia: vi.fn() },
+      value: {
+        getUserMedia: vi.fn(),
+        enumerateDevices: vi.fn().mockResolvedValue([
+          { kind: 'videoinput', deviceId: 'rear', label: 'Back camera' },
+        ]),
+      },
     });
   });
 
@@ -247,6 +304,31 @@ describe('ScannerView', () => {
     expect(scannerMocks.videoConstraints?.facingMode).toBe('environment');
     expect(screen.queryByText('Starting camera...')).not.toBeInTheDocument();
     warn.mockRestore();
+  });
+
+  it('can try Quagga2 for retail barcodes and return to the standard scanner', async () => {
+    render(<ScannerView onClose={vi.fn()} onAddNewProduct={vi.fn()} />);
+    await waitFor(() => expect(scannerMocks.start).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Try Quagga2' }));
+    await waitFor(() => expect(quaggaMocks.start).toHaveBeenCalledOnce());
+    expect(screen.getByText('Quagga2 test · 1D retail barcodes only (no QR)')).toBeInTheDocument();
+    expect(quaggaMocks.init).toHaveBeenCalledWith(expect.objectContaining({
+      decoder: {
+        readers: expect.arrayContaining(['ean_reader', 'upc_reader', 'code_128_reader']),
+      },
+      locate: true,
+    }));
+
+    act(() => {
+      quaggaMocks.detectedCallback?.({ codeResult: { code: '123456' } });
+    });
+    expect(storeMocks.addToCart).toHaveBeenCalledOnce();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Use standard' }));
+    await waitFor(() => expect(scannerMocks.start).toHaveBeenCalledTimes(2));
+    expect(quaggaMocks.stop).toHaveBeenCalledOnce();
+    expect(screen.getByText('Standard scanner · QR and retail barcodes')).toBeInTheDocument();
   });
 
   it('fills the Add Product barcode field when its scan button is used', async () => {

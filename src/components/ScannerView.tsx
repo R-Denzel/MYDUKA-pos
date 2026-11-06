@@ -16,6 +16,7 @@ import type {
   CameraDevice,
   Html5Qrcode as Html5QrcodeInstance,
 } from 'html5-qrcode';
+import type { QuaggaJSResultObject, QuaggaJSStatic } from '@ericblade/quagga2';
 import { useStore } from '@/store/useStore';
 import type { Product, ProductVariant } from '@/types/pos';
 import { formatCurrency } from '@/lib/currency';
@@ -85,6 +86,7 @@ export default function ScannerView({
   const exchangeRates = useStore((state) => state.exchangeRates);
   const [manualCode, setManualCode] = useState('');
   const [showManual, setShowManual] = useState(false);
+  const [scannerEngine, setScannerEngine] = useState<'html5' | 'quagga2'>('html5');
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [cameraUnsupported, setCameraUnsupported] = useState(false);
   const [isLoadingCamera, setIsLoadingCamera] = useState(false);
@@ -194,6 +196,9 @@ export default function ScannerView({
 
     let cancelled = false;
     let activeScanner: Html5QrcodeInstance | null = null;
+    let activeQuagga: QuaggaJSStatic | null = null;
+    let quaggaInitPromise: Promise<void> | null = null;
+    let quaggaStarted = false;
     let pendingStart: Promise<null> | null = null;
 
     const startCamera = async () => {
@@ -221,6 +226,104 @@ export default function ScannerView({
         await pendingCameraStopRef.current;
         if (cancelled) return;
         await stopScanner();
+
+        const handleDecodedBarcode = (decodedText: string) => {
+          const barcode = decodedText.trim();
+          if (!barcode || barcode === lockedBarcodeRef.current) return;
+
+          lockedBarcodeRef.current = barcode;
+          missedFramesRef.current = 0;
+          if (unknownBarcodeRef.current) return;
+
+          navigator.vibrate?.(35);
+          handleLookup(barcode);
+        };
+
+        const handleMissedFrame = () => {
+          if (!lockedBarcodeRef.current || unknownBarcodeRef.current) return;
+
+          missedFramesRef.current += 1;
+          if (missedFramesRef.current >= MISSED_FRAMES_TO_UNLOCK) {
+            lockedBarcodeRef.current = '';
+            missedFramesRef.current = 0;
+          }
+        };
+
+        if (scannerEngine === 'quagga2') {
+          const { default: Quagga } = await import('@ericblade/quagga2');
+          if (cancelled) return;
+
+          activeQuagga = Quagga;
+          const cameraDevices = (await navigator.mediaDevices.enumerateDevices())
+            .filter((device) => device.kind === 'videoinput');
+          const preferredCamera = cameraDevices.find(
+            (camera) => camera.deviceId === selectedCameraIdRef.current,
+          ) ?? cameraDevices.find((camera) => /(back|rear|environment)/i.test(camera.label));
+          const cameraConstraints: MediaTrackConstraints = {
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            ...(preferredCamera
+              ? { deviceId: { exact: preferredCamera.deviceId } }
+              : { facingMode: 'environment' }),
+          };
+          const target = document.getElementById('barcode-reader');
+          if (!target) throw new Error('The barcode scanner view is unavailable.');
+
+          const onQuaggaDetected = (result: QuaggaJSResultObject) => {
+            const barcode = result.codeResult?.code;
+            if (barcode) handleDecodedBarcode(barcode);
+          };
+          const onQuaggaProcessed = (result: QuaggaJSResultObject) => {
+            if (!result.codeResult?.code) handleMissedFrame();
+          };
+
+          const config = {
+            inputStream: {
+              type: 'LiveStream' as const,
+              target,
+              constraints: cameraConstraints,
+            },
+            decoder: {
+              readers: [
+                'ean_reader',
+                'ean_8_reader',
+                'upc_reader',
+                'upc_e_reader',
+                'code_128_reader',
+                'code_39_reader',
+                'code_93_reader',
+                'codabar_reader',
+                'i2of5_reader',
+              ],
+            },
+            locate: true,
+            frequency: 10,
+          };
+
+          quaggaInitPromise = Quagga.init(config);
+          await quaggaInitPromise;
+          if (cancelled) return;
+
+          Quagga.onDetected(onQuaggaDetected);
+          Quagga.onProcessed(onQuaggaProcessed);
+          Quagga.start();
+          quaggaStarted = true;
+
+          const activeDeviceId = Quagga.CameraAccess.getActiveTrack()?.getSettings().deviceId;
+          const devices = (await navigator.mediaDevices.enumerateDevices())
+            .filter((device) => device.kind === 'videoinput');
+          const cameras = devices.map((device) => ({ id: device.deviceId, label: device.label }));
+          setAvailableCameras(cameras);
+          const activeCamera = cameras.find((camera) => camera.id === activeDeviceId)
+            ?? getPreferredCamera(cameras, selectedCameraIdRef.current);
+          if (activeCamera) {
+            selectedCameraIdRef.current = activeCamera.id;
+            setSelectedCameraId(activeCamera.id);
+            saveCameraId(activeCamera.id);
+          }
+          return;
+        }
+
         const { Html5Qrcode, Html5QrcodeSupportedFormats } = await import('html5-qrcode');
         const cameras = await Html5Qrcode.getCameras();
         if (cancelled) return;
@@ -265,35 +368,13 @@ export default function ScannerView({
           ],
         };
 
-        const onScanSuccess = (decodedText: string) => {
-          const barcode = decodedText.trim();
-          if (!barcode || barcode === lockedBarcodeRef.current) return;
-
-          lockedBarcodeRef.current = barcode;
-          missedFramesRef.current = 0;
-          if (unknownBarcodeRef.current) return;
-
-          navigator.vibrate?.(35);
-          handleLookup(barcode);
-        };
-
-        const onScanFailure = () => {
-          if (!lockedBarcodeRef.current || unknownBarcodeRef.current) return;
-
-          missedFramesRef.current += 1;
-          if (missedFramesRef.current >= MISSED_FRAMES_TO_UNLOCK) {
-            lockedBarcodeRef.current = '';
-            missedFramesRef.current = 0;
-          }
-        };
-
         const rearCameraConstraints: MediaTrackConstraints = {
           facingMode: 'environment',
           width: { ideal: 1280 },
           height: { ideal: 720 },
         };
         const startOn = (camera: string | MediaTrackConstraints) => {
-          pendingStart = scanner.start(camera, config, onScanSuccess, onScanFailure);
+          pendingStart = scanner.start(camera, config, handleDecodedBarcode, handleMissedFrame);
           return pendingStart;
         };
 
@@ -333,6 +414,16 @@ export default function ScannerView({
       } catch (error) {
         if (cancelled) return;
 
+        if (activeQuagga) {
+          try {
+            if (quaggaStarted) await activeQuagga.stop();
+            else await activeQuagga.CameraAccess.release();
+            document.getElementById('barcode-reader')?.replaceChildren();
+          } catch (cleanupError) {
+            console.warn('Quagga camera cleanup warning:', cleanupError);
+          }
+          quaggaStarted = false;
+        }
         console.error('Camera error:', error);
         setCameraError(error instanceof Error ? error.message : 'Camera unavailable.');
         toast.error('Camera unavailable — use manual entry or retry');
@@ -353,11 +444,28 @@ export default function ScannerView({
           await stopCamera(scannerToStop);
         })();
       }
+      if (activeQuagga) {
+        const quaggaToStop = activeQuagga;
+        quaggaToStop.offDetected();
+        quaggaToStop.offProcessed();
+        pendingCameraStopRef.current = (async () => {
+          if (quaggaInitPromise) await quaggaInitPromise.catch(() => undefined);
+          if (quaggaStarted) {
+            await quaggaToStop.stop();
+          } else {
+            await quaggaToStop.CameraAccess.release();
+          }
+          document.getElementById('barcode-reader')?.replaceChildren();
+        })().catch((error: unknown) => {
+          console.warn('Quagga camera cleanup warning:', error);
+        });
+      }
     };
   }, [
     getPreferredCamera,
     handleLookup,
     scannerStartKey,
+    scannerEngine,
     showManual,
     stopScanner,
   ]);
@@ -371,6 +479,13 @@ export default function ScannerView({
     setSelectedCameraId(cameraId);
     saveCameraId(cameraId);
     lockedBarcodeRef.current = '';
+    setScannerStartKey((key) => key + 1);
+  };
+
+  const handleScannerEngineChange = () => {
+    lockedBarcodeRef.current = '';
+    missedFramesRef.current = 0;
+    setScannerEngine((engine) => engine === 'html5' ? 'quagga2' : 'html5');
     setScannerStartKey((key) => key + 1);
   };
 
@@ -437,8 +552,26 @@ export default function ScannerView({
       </header>
 
       {!showManual && (
+        <>
+        <div className="flex items-center justify-between gap-3 bg-foreground px-4 py-2 text-background">
+          <p className="text-xs text-background/70">
+            {scannerEngine === 'quagga2'
+              ? 'Quagga2 test · 1D retail barcodes only (no QR)'
+              : 'Standard scanner · QR and retail barcodes'}
+          </p>
+          <button
+            type="button"
+            onClick={handleScannerEngineChange}
+            className="shrink-0 rounded-lg border border-background/25 px-3 py-1.5 text-xs font-semibold hover:bg-background/10"
+          >
+            {scannerEngine === 'quagga2' ? 'Use standard' : 'Try Quagga2'}
+          </button>
+        </div>
         <div className="relative flex-1 overflow-hidden bg-black">
-          <div id="barcode-reader" className="absolute inset-0" />
+          <div
+            id="barcode-reader"
+            className={`absolute inset-0 ${scannerEngine === 'quagga2' ? 'quagga-scanner' : ''}`}
+          />
 
           {isLoadingCamera && (
             <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/80 px-6 text-center">
@@ -587,6 +720,7 @@ export default function ScannerView({
             </>
           )}
         </div>
+        </>
       )}
 
       {showManual && (
