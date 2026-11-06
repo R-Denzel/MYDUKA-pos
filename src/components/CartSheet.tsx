@@ -1,7 +1,7 @@
 import { useStore } from '@/store/useStore';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Minus, Plus, Banknote, Smartphone, CreditCard, CheckCircle2, LockKeyhole } from 'lucide-react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { PaymentMethod } from '@/types/pos';
 import { formatCurrency } from '@/lib/currency';
 import { calculateSaleTotals, getBillableItems } from '@/lib/pricing';
@@ -13,6 +13,30 @@ interface CartSheetProps {
   onClose: () => void;
   hasPremium?: boolean;
   onOpenSettings?: () => void;
+}
+
+const pendingSaleStorageKey = 'myduka.pendingSaleOperation';
+
+function getPendingSaleOperationId() {
+  try {
+    const storedId = window.sessionStorage.getItem(pendingSaleStorageKey);
+    if (storedId) return storedId;
+    const operationId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `sale-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    window.sessionStorage.setItem(pendingSaleStorageKey, operationId);
+    return operationId;
+  } catch {
+    throw new Error('Checkout could not save its retry reference. Allow session storage and retry.');
+  }
+}
+
+function clearPendingSaleOperation() {
+  try {
+    window.sessionStorage.removeItem(pendingSaleStorageKey);
+  } catch (error) {
+    console.warn('Could not clear the completed checkout retry reference', error);
+  }
 }
 
 export default function CartSheet({
@@ -40,6 +64,7 @@ export default function CartSheet({
   const [saleComplete, setSaleComplete] = useState(false);
   const [completedTotal, setCompletedTotal] = useState(0);
   const [paymentInProgress, setPaymentInProgress] = useState(false);
+  const saleOperationIdRef = useRef<string | null>(null);
 
   const total = cartTotal(hasPremium);
   const totals = calculateSaleTotals(getBillableItems(cart, hasPremium), {
@@ -53,22 +78,52 @@ export default function CartSheet({
       ? product?.variants.find((candidate) => candidate.id === item.variantId)
       : undefined;
     const available = item.variantId ? variant?.stock : product?.totalStock;
+    const requested = cart
+      .filter((candidate) =>
+        candidate.productId === item.productId && candidate.variantId === item.variantId,
+      )
+      .reduce((quantity, candidate) => quantity + candidate.qty, 0);
     return !product || (product.hasVariants && !item.variantId) ||
-      available === undefined || item.qty > available;
+      available === undefined || requested > available;
   });
+  const stockIssueProduct = stockIssue && products.find((product) => product.id === stockIssue.productId);
+  const stockIssueVariant = stockIssue?.variantId
+    ? stockIssueProduct?.variants.find((variant) => variant.id === stockIssue.variantId)
+    : undefined;
+  const stockIssueAvailable = stockIssue?.variantId
+    ? stockIssueVariant?.stock
+    : stockIssueProduct?.totalStock;
+  const stockIssueRequested = stockIssue
+    ? cart
+      .filter((item) => item.productId === stockIssue.productId && item.variantId === stockIssue.variantId)
+      .reduce((quantity, item) => quantity + item.qty, 0)
+    : 0;
   const stockIssueMessage = stockIssue
-    ? `${stockIssue.name}${stockIssue.variantName ? ` (${stockIssue.variantName})` : ''} is out of stock or no longer has enough stock.`
+    ? !stockIssueProduct
+      ? `${stockIssue.name} is no longer in inventory.`
+      : `Insufficient stock for ${stockIssue.name}${stockIssue.variantName ? ` (${stockIssue.variantName})` : ''}: ${stockIssueAvailable ?? 0} available, ${stockIssueRequested} in cart.`
     : '';
 
   const handlePayment = async (method: PaymentMethod) => {
     if (paymentInProgress) return;
     setPaymentInProgress(true);
     try {
-      const sale = await completeSale(method, auth.currentUser?.uid, hasPremium);
+      const operationId = saleOperationIdRef.current ??= getPendingSaleOperationId();
+      const sale = await completeSale(
+        method,
+        auth.currentUser?.uid,
+        hasPremium,
+        operationId,
+      );
       if (sale) {
+        saleOperationIdRef.current = null;
+        clearPendingSaleOperation();
         setCompletedTotal(sale.total);
         setSaleComplete(true);
         setShowPayment(false);
+      } else {
+        saleOperationIdRef.current = null;
+        clearPendingSaleOperation();
       }
     } catch (error) {
       console.error('Sale checkout failed', error);

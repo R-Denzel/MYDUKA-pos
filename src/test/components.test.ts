@@ -103,7 +103,7 @@ describe('CartSheet Component', () => {
 
     render(React.createElement(CartSheet, { open: true, onClose: vi.fn() }));
 
-    expect(screen.getByRole('alert')).toHaveTextContent('Item 1 is out of stock');
+    expect(screen.getByRole('alert')).toHaveTextContent('Insufficient stock for Item 1: 0 available, 1 in cart');
     expect(screen.getByRole('button', { name: /Charge/ })).toBeDisabled();
   });
 
@@ -142,7 +142,7 @@ describe('CartSheet - Payment Methods', () => {
     fireEvent.click(screen.getByRole('button', { name: /Charge UGX 5,000/i }));
     fireEvent.click(screen.getByRole('button', { name: 'Cash' }));
 
-    await waitFor(() => expect(mockcompleteSale).toHaveBeenCalledWith('cash', undefined, false));
+    await waitFor(() => expect(mockcompleteSale).toHaveBeenCalledWith('cash', undefined, false, expect.any(String)));
   });
 
   it('should support mobile money payment', async () => {
@@ -165,6 +165,6 @@ describe('CartSheet - Payment Methods', () => {
     fireEvent.click(screen.getByRole('button', { name: /Charge UGX 5,000/i }));
     fireEvent.click(screen.getByRole('button', { name: 'Mobile Money' }));
 
-    await waitFor(() => expect(mockcompleteSale).toHaveBeenCalledWith('mobile_money', undefined, false));
+    await waitFor(() => expect(mockcompleteSale).toHaveBeenCalledWith('mobile_money', undefined, false, expect.any(String)));
   });
 });

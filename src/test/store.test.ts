@@ -7,7 +7,7 @@ describe('useStore - POS Store Tests', () => {
 
   beforeEach(() => {
     // Reset store before each test
-    setLocalPremiumDemoEnabled(false);
+    setLocalPremiumDemoEnabled(true);
     useStore.setState({ products: [], cart: [], sales: [], activeTab: 'home' });
     store = useStore.getState();
   });
@@ -75,6 +75,66 @@ describe('useStore - POS Store Tests', () => {
       expect(updated.name).toBe('Updated Name');
       expect(updated.totalStock).toBe(5);
     });
+
+    it('adds scanned deliveries to the existing product without duplicating it', async () => {
+      const product: Product = {
+        id: 'restock-product',
+        name: 'Tea',
+        barcode: 'TEA-123',
+        category: 'Drinks',
+        basePrice: 2500,
+        hasVariants: false,
+        variants: [],
+        totalStock: 0,
+        createdAt: new Date().toISOString(),
+      };
+      store.addProduct(product);
+
+      const updated = await store.restockProduct(product.id, 12, 'restock-op-1');
+      expect(updated.totalStock).toBe(12);
+      expect(useStore.getState().products).toHaveLength(1);
+      expect(useStore.getState().products[0].barcode).toBe('TEA-123');
+    });
+
+    it('applies the same restock operation only once', async () => {
+      const product: Product = {
+        id: 'restock-idempotent',
+        name: 'Rice',
+        barcode: 'RICE-123',
+        category: 'Food',
+        basePrice: 3000,
+        hasVariants: false,
+        variants: [],
+        totalStock: 2,
+        createdAt: new Date().toISOString(),
+      };
+      store.addProduct(product);
+
+      await store.restockProduct(product.id, 5, 'same-restock-operation');
+      await store.restockProduct(product.id, 5, 'same-restock-operation');
+
+      expect(useStore.getState().products[0].totalStock).toBe(7);
+    });
+
+    it('rejects reusing a restock operation id for a different request', async () => {
+      const product: Product = {
+        id: 'restock-operation-conflict',
+        name: 'Beans',
+        barcode: 'BEANS-123',
+        category: 'Food',
+        basePrice: 3000,
+        hasVariants: false,
+        variants: [],
+        totalStock: 2,
+        createdAt: new Date().toISOString(),
+      };
+      store.addProduct(product);
+      await store.restockProduct(product.id, 5, 'restock-conflict');
+
+      await expect(store.restockProduct(product.id, 6, 'restock-conflict'))
+        .rejects.toThrow('This restock request id was already used.');
+      expect(useStore.getState().products[0].totalStock).toBe(7);
+    });
   });
 
   describe('Cart Management', () => {
@@ -133,6 +193,24 @@ describe('useStore - POS Store Tests', () => {
       
       expect(useStore.getState().cart).toHaveLength(1);
       expect(useStore.getState().cart[0].qty).toBe(2);
+    });
+
+    it('rejects cart quantities above available stock', () => {
+      expect(store.addToCart({
+        productId: 'prod1',
+        name: 'Test Product',
+        price: 5000,
+        qty: 8,
+      })).toBe(true);
+      expect(store.addToCart({
+        productId: 'prod1',
+        name: 'Test Product',
+        price: 5000,
+        qty: 3,
+      })).toBe(false);
+      expect(useStore.getState().cart[0].qty).toBe(8);
+      expect(store.updateCartQty('prod1', 11)).toBe(false);
+      expect(useStore.getState().cart[0].qty).toBe(8);
     });
 
     it('should update cart quantity', () => {
@@ -232,6 +310,24 @@ describe('useStore - POS Store Tests', () => {
       expect(sale?.total).toBe(15000);
       expect(useStore.getState().products[0].totalStock).toBe(7); // 10 - 3
       expect(useStore.getState().cart).toHaveLength(0); // Cart cleared
+    });
+
+    it('does not deduct stock twice when a committed checkout is retried', async () => {
+      const item: CartItem = {
+        productId: 'prod1',
+        name: 'Test Product',
+        price: 5000,
+        qty: 2,
+      };
+      store.addToCart(item);
+      const firstSale = await store.completeSale('cash', undefined, false, 'retryable-sale');
+
+      useStore.setState({ cart: [item] });
+      const retriedSale = await store.completeSale('cash', undefined, false, 'retryable-sale');
+
+      expect(retriedSale?.id).toBe(firstSale?.id);
+      expect(useStore.getState().products[0].totalStock).toBe(8);
+      expect(useStore.getState().cart).toHaveLength(0);
     });
 
     it('does not apply saved Premium discounts or VAT without Premium access', async () => {

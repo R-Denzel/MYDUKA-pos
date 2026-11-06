@@ -24,7 +24,8 @@ import { formatCurrency } from '@/lib/currency';
 interface ScannerViewProps {
   onClose: () => void;
   onAddNewProduct?: (barcode: string) => void;
-  onBarcodeDetected?: (barcode: string) => void;
+  onBarcodeDetected?: (barcode: string) => boolean | void;
+  barcodePrompt?: string;
 }
 
 interface ZoomSettings {
@@ -76,6 +77,7 @@ export default function ScannerView({
   onClose,
   onAddNewProduct,
   onBarcodeDetected,
+  barcodePrompt = 'Scan to fill in the product barcode',
 }: ScannerViewProps) {
   const getProductByBarcode = useStore((state) => state.getProductByBarcode);
   const addToCart = useStore((state) => state.addToCart);
@@ -139,8 +141,12 @@ export default function ScannerView({
       if (!cleanedCode) return;
 
       if (onBarcodeDetected) {
-        onBarcodeDetected(cleanedCode);
-        toast.success('Barcode added to product details');
+        const accepted = onBarcodeDetected(cleanedCode);
+        if (accepted !== false) {
+          toast.success(barcodePrompt === 'Scan to fill in the product barcode'
+            ? 'Barcode added to product details'
+            : 'Barcode accepted');
+        }
         onClose();
         return;
       }
@@ -180,7 +186,7 @@ export default function ScannerView({
       setUnknownBarcode(cleanedCode);
       toast.info('Product not found — add it to inventory');
     },
-    [addToCart, getProductByBarcode, onBarcodeDetected, onClose],
+    [addToCart, barcodePrompt, getProductByBarcode, onBarcodeDetected, onClose],
   );
 
   const addVariantToCart = (product: Product, variant: ProductVariant) => {
@@ -550,7 +556,7 @@ export default function ScannerView({
         <div className="min-w-0 text-center">
           <h1 className="text-body font-semibold">Scan Barcode</h1>
           <p className="text-xs text-background/65">{onBarcodeDetected
-            ? 'Scan to fill in the product barcode'
+            ? barcodePrompt
             : `${cartCount} item${cartCount === 1 ? '' : 's'} in cart`}</p>
         </div>
         <button

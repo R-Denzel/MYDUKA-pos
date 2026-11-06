@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { useStore } from '@/store/useStore';
-import { Search, Plus, Package, ScanBarcode, Barcode, LockKeyhole } from 'lucide-react';
+import { Search, Plus, Package, PackagePlus, ScanBarcode, Barcode, LockKeyhole } from 'lucide-react';
 import { formatCurrency } from '@/lib/currency';
 import { toast } from 'sonner';
 import BarcodeLabel from '@/components/BarcodeLabel';
+import RestockDialog from '@/components/RestockDialog';
 import { Product } from '@/types/pos';
 
 function getStockColor(stock: number) {
@@ -22,6 +23,7 @@ export default function InventoryList({ onAddProduct, hasPremium, onOpenSettings
   const { products, displayCurrency, exchangeRates } = useStore();
   const [search, setSearch] = useState('');
   const [selectedBarcodeProduct, setSelectedBarcodeProduct] = useState<Product | null>(null);
+  const [selectedRestockProduct, setSelectedRestockProduct] = useState<Product | null>(null);
 
   const filtered = products.filter(
     (p) =>
@@ -85,13 +87,23 @@ export default function InventoryList({ onAddProduct, hasPremium, onOpenSettings
             </div>
             <div className="flex-1 min-w-0">
               <p className="truncate text-sm font-semibold">{product.name}</p>
-              <div className="mt-1 flex items-center gap-2">
+              <div className="mt-1 flex flex-wrap items-center gap-2">
                 <span className="truncate text-xs text-muted-foreground">{product.category}</span>
                 <span className="h-1 w-1 shrink-0 rounded-full bg-border" />
                 <span className={`shrink-0 text-xs font-semibold ${getStockColor(product.totalStock)}`}>
-                  {product.totalStock} in stock
+                  {product.totalStock} left
                 </span>
               </div>
+              {product.totalStock === 0 && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedRestockProduct(product)}
+                  className="mt-2 inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/5 px-3 text-xs font-bold text-primary hover:bg-primary/10"
+                >
+                  <PackagePlus className="h-3.5 w-3.5" />
+                  Restock
+                </button>
+              )}
             </div>
             <div className="shrink-0 text-right">
               <p className="text-sm font-bold tabular-nums">
@@ -162,6 +174,13 @@ export default function InventoryList({ onAddProduct, hasPremium, onOpenSettings
         <BarcodeLabel
           product={selectedBarcodeProduct}
           onClose={() => setSelectedBarcodeProduct(null)}
+        />
+      )}
+      {selectedRestockProduct && (
+        <RestockDialog
+          key={selectedRestockProduct.id}
+          product={selectedRestockProduct}
+          onClose={() => setSelectedRestockProduct(null)}
         />
       )}
     </div>
