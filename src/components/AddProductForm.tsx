@@ -3,13 +3,22 @@ import { useStore } from '@/store/useStore';
 import { Product, ProductVariant, CATEGORIES } from '@/types/pos';
 import { X, Plus, ScanBarcode, Trash2 } from 'lucide-react';
 import ScannerView from '@/components/ScannerView';
+import { toast } from 'sonner';
+import { LockKeyhole, Barcode } from 'lucide-react';
 
 interface AddProductFormProps {
   onClose: () => void;
   prefillBarcode?: string;
+  hasPremium?: boolean;
+  onOpenSettings?: () => void;
 }
 
-export default function AddProductForm({ onClose, prefillBarcode }: AddProductFormProps) {
+export default function AddProductForm({
+  onClose,
+  prefillBarcode,
+  hasPremium = false,
+  onOpenSettings = () => undefined,
+}: AddProductFormProps) {
   const { addProduct } = useStore();
   const [name, setName] = useState(prefillBarcode ? `Product ${prefillBarcode.slice(-4)}` : '');
   const [barcode, setBarcode] = useState(prefillBarcode || '');
@@ -19,10 +28,22 @@ export default function AddProductForm({ onClose, prefillBarcode }: AddProductFo
   const [hasVariants, setHasVariants] = useState(false);
   const [variants, setVariants] = useState<{ name: string; price: string; stock: string }[]>([]);
   const [showBarcodeScanner, setShowBarcodeScanner] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   const handleBarcodeDetected = useCallback((scannedBarcode: string) => {
     setBarcode(scannedBarcode);
   }, []);
+
+  const generateBarcode = () => {
+    if (!hasPremium) {
+      onOpenSettings();
+      return;
+    }
+    const suffix = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID().replace(/-/g, '').slice(0, 10).toUpperCase()
+      : Math.random().toString(36).slice(2, 12).toUpperCase();
+    setBarcode(`DK${suffix}`);
+  };
 
   const uuid = () => {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -44,7 +65,16 @@ export default function AddProductForm({ onClose, prefillBarcode }: AddProductFo
   };
 
   const handleSubmit = async () => {
-    if (!name || !basePrice) return;
+    if (!name.trim() || !basePrice || isSaving) return;
+    if (hasVariants && variants.length === 0) {
+      toast.error('Add at least one package or product option.');
+      return;
+    }
+    if (hasVariants && variants.some((variant) => !variant.name.trim())) {
+      toast.error('Enter a name for each package or product option.');
+      return;
+    }
+    setIsSaving(true);
 
     const productVariants: ProductVariant[] = hasVariants
       ? variants.map((v) => ({
@@ -73,31 +103,38 @@ export default function AddProductForm({ onClose, prefillBarcode }: AddProductFo
 
     try {
       await addProduct(product);
+      toast.success(`${name.trim()} saved to inventory`);
       onClose();
     } catch (err) {
       console.error('Failed to add product:', err);
+      toast.error('Could not save product. Please try again.');
+    } finally {
+      setIsSaving(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-background">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+    <div className="fixed inset-0 z-50 bg-background lg:flex lg:items-center lg:justify-center lg:bg-foreground/45 lg:p-8 lg:backdrop-blur-sm">
+      <section className="flex h-full flex-col bg-background lg:h-auto lg:max-h-[90vh] lg:w-full lg:max-w-3xl lg:overflow-hidden lg:rounded-2xl lg:border lg:border-border lg:bg-card lg:shadow-modal">
+      <header className="flex items-center justify-between border-b border-border px-4 py-3 lg:px-6">
         <button onClick={onClose} className="touch-target flex items-center justify-center active-scale">
           <X className="w-6 h-6" />
         </button>
-        <h1 className="text-section font-semibold">Add Product</h1>
+        <div className="text-center">
+          <p className="hidden text-[10px] font-bold uppercase tracking-[0.16em] text-primary lg:block">Inventory</p>
+          <h1 className="text-section font-semibold">Add Product</h1>
+        </div>
         <button
           onClick={handleSubmit}
-          disabled={!name.trim() || !basePrice || isNaN(Number(basePrice)) || Number(basePrice) <= 0}
+          disabled={isSaving || !name.trim() || !basePrice || isNaN(Number(basePrice)) || Number(basePrice) <= 0}
           className="bg-primary text-primary-foreground rounded-lg px-4 py-2 text-body font-semibold active-scale disabled:opacity-40"
         >
-          Save
+          {isSaving ? 'Saving…' : 'Save'}
         </button>
-      </div>
+      </header>
 
       {/* Form */}
-      <div className="px-4 py-4 space-y-4 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 60px)', WebkitOverflowScrolling: 'touch' }}>
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 lg:px-6" style={{ maxHeight: 'calc(100vh - 60px)', WebkitOverflowScrolling: 'touch' }}>
         <div>
           <label className="text-meta text-muted-foreground font-medium block mb-1">Product Name *</label>
           <input
@@ -111,13 +148,13 @@ export default function AddProductForm({ onClose, prefillBarcode }: AddProductFo
 
         <div>
           <label className="text-meta text-muted-foreground font-medium block mb-1">Barcode</label>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <input
               type="text"
               value={barcode}
               onChange={(e) => setBarcode(e.target.value)}
               placeholder="Scan or enter barcode (optional)"
-              className="min-w-0 flex-1 bg-card border border-border rounded-lg px-4 py-3 text-body focus:outline-none focus:ring-2 focus:ring-accent"
+              className="min-w-0 flex-1 basis-40 bg-card border border-border rounded-lg px-4 py-3 text-body focus:outline-none focus:ring-2 focus:ring-accent"
             />
             <button
               type="button"
@@ -128,6 +165,15 @@ export default function AddProductForm({ onClose, prefillBarcode }: AddProductFo
             >
               <ScanBarcode className="h-5 w-5" />
               <span className="hidden text-sm font-medium sm:inline">Scan</span>
+            </button>
+            <button
+              type="button"
+              onClick={generateBarcode}
+              title="Generate an internal Code 128 barcode"
+              className="touch-target flex shrink-0 items-center justify-center gap-2 rounded-lg border border-border bg-card px-3 text-foreground active-scale"
+            >
+              {hasPremium ? <Barcode className="h-5 w-5" /> : <LockKeyhole className="h-4 w-4" />}
+              <span className="hidden text-sm font-medium sm:inline">Generate</span>
             </button>
           </div>
           {prefillBarcode && (
@@ -180,9 +226,26 @@ export default function AddProductForm({ onClose, prefillBarcode }: AddProductFo
 
         {/* Variants Toggle */}
         <div className="flex items-center justify-between py-2">
-          <span className="text-body font-medium">Has Variants (size, color)?</span>
+          <div className="pr-4">
+            <span className="flex items-center gap-1.5 text-body font-medium">
+              Sell in multiple options or packages?
+              {!hasPremium && <LockKeyhole className="h-3.5 w-3.5 text-muted-foreground" />}
+            </span>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Examples: single bottle, carton of 12, 500g pack, or a dozen.
+            </p>
+          </div>
           <button
-            onClick={() => setHasVariants(!hasVariants)}
+            type="button"
+            aria-label="Toggle package options"
+            aria-pressed={hasVariants}
+            onClick={() => {
+              if (!hasPremium) {
+                onOpenSettings();
+                return;
+              }
+              setHasVariants(!hasVariants);
+            }}
             className={`w-12 h-7 rounded-full transition-colors ${
               hasVariants ? 'bg-accent' : 'bg-muted'
             } relative`}
@@ -211,12 +274,13 @@ export default function AddProductForm({ onClose, prefillBarcode }: AddProductFo
                   type="text"
                   value={v.name}
                   onChange={(e) => updateVariant(i, 'name', e.target.value)}
-                  placeholder="e.g. Medium / Blue"
+                  placeholder="e.g. Carton of 12, 500g pack, or Blue"
                   className="w-full bg-card border border-border rounded-lg px-3 py-2 text-body focus:outline-none focus:ring-2 focus:ring-accent"
                 />
                 <div className="grid grid-cols-2 gap-2">
                   <input
                     type="number"
+                    min="0"
                     value={v.price}
                     onChange={(e) => updateVariant(i, 'price', e.target.value)}
                     placeholder="Price"
@@ -224,6 +288,7 @@ export default function AddProductForm({ onClose, prefillBarcode }: AddProductFo
                   />
                   <input
                     type="number"
+                    min="0"
                     value={v.stock}
                     onChange={(e) => updateVariant(i, 'stock', e.target.value)}
                     placeholder="Stock"
@@ -242,6 +307,7 @@ export default function AddProductForm({ onClose, prefillBarcode }: AddProductFo
           </div>
         )}
       </div>
+      </section>
       {showBarcodeScanner && (
         <ScannerView
           onClose={() => setShowBarcodeScanner(false)}

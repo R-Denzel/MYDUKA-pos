@@ -1,9 +1,15 @@
 import { useStore } from '@/store/useStore';
 import { useMemo } from 'react';
-import { TrendingUp, Award, Package } from 'lucide-react';
+import { TrendingUp, Award, Package, Download, LockKeyhole } from 'lucide-react';
 import { formatCurrency } from '@/lib/currency';
+import { jsPDF } from 'jspdf';
 
-export default function Reports() {
+interface ReportsProps {
+  hasPremium: boolean;
+  onOpenSettings: () => void;
+}
+
+export default function Reports({ hasPremium, onOpenSettings }: ReportsProps) {
   const { sales, products, displayCurrency, exchangeRates } = useStore();
 
   const stats = useMemo(() => {
@@ -41,16 +47,66 @@ export default function Reports() {
     };
   }, [sales, products]);
 
+  const downloadReport = () => {
+    if (!hasPremium) return;
+
+    const pdf = new jsPDF();
+    pdf.setFontSize(18);
+    pdf.text('DukaPOS Sales Report', 16, 20);
+    pdf.setFontSize(10);
+    pdf.text(`Generated: ${new Date().toLocaleString()}`, 16, 28);
+    pdf.text(`Today: UGX ${stats.today.total.toLocaleString('en-UG')}`, 16, 39);
+    pdf.text(`This week: UGX ${stats.week.total.toLocaleString('en-UG')}`, 16, 46);
+    pdf.text(`This month: UGX ${stats.month.total.toLocaleString('en-UG')}`, 16, 53);
+
+    let y = 66;
+    pdf.setFont('helvetica', 'bold');
+    pdf.text('Date', 16, y);
+    pdf.text('Payment', 67, y);
+    pdf.text('Discount (UGX)', 113, y);
+    pdf.text('VAT (UGX)', 153, y);
+    pdf.text('Total (UGX)', 190, y, { align: 'right' });
+    pdf.setFont('helvetica', 'normal');
+
+    for (const sale of [...sales].sort((a, b) => a.timestamp.localeCompare(b.timestamp))) {
+      y += 7;
+      if (y > 275) {
+        pdf.addPage();
+        y = 20;
+      }
+      pdf.text(new Date(sale.timestamp).toLocaleDateString(), 16, y);
+      pdf.text(sale.paymentMethod.replace('_', ' '), 67, y);
+      pdf.text((sale.discountTotal || 0).toLocaleString('en-UG'), 113, y);
+      pdf.text((sale.vatAmount || 0).toLocaleString('en-UG'), 153, y);
+      pdf.text(sale.total.toLocaleString('en-UG'), 190, y, { align: 'right' });
+    }
+
+    pdf.save('dukapos-sales-report.pdf');
+  };
+
   return (
-    <div className="space-y-7 px-4 pb-32 pt-7 sm:px-6 lg:px-8 lg:pt-10">
+    <div className="space-y-7 px-4 pb-32 pt-7 sm:px-6 lg:px-0 lg:pb-10 lg:pt-7">
       <div>
-        <p className="text-xs font-semibold uppercase tracking-wide text-primary">Numbers that move you forward</p>
+        <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-primary">Business insights</p>
         <h1 className="mt-1 text-2xl font-extrabold tracking-tight sm:text-3xl">Reports</h1>
         <p className="mt-1 text-sm text-muted-foreground">Sales performance and inventory health.</p>
         <p className="mt-1 text-xs text-muted-foreground">
           Totals are shown using {displayCurrency} at the saved exchange rate. Recorded values remain in UGX.
         </p>
       </div>
+
+      <button
+        type="button"
+        onClick={hasPremium ? downloadReport : onOpenSettings}
+        className={`inline-flex min-h-11 items-center gap-2 rounded-xl px-4 text-sm font-semibold ${
+          hasPremium
+            ? 'bg-primary text-primary-foreground'
+            : 'border border-border bg-card text-muted-foreground'
+        }`}
+      >
+        {hasPremium ? <Download className="h-4 w-4" /> : <LockKeyhole className="h-4 w-4" />}
+        {hasPremium ? 'Download PDF report' : 'Premium · PDF reports'}
+      </button>
 
       {/* Period Stats */}
       <div className="grid gap-3 md:grid-cols-3">

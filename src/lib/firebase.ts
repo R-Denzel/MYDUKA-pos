@@ -2,8 +2,9 @@ import { initializeApp } from 'firebase/app';
 import { getFirestore, enableIndexedDbPersistence, collection, getDocs } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { getAnalytics, isSupported } from 'firebase/analytics';
+import { getFunctions } from 'firebase/functions';
 
-const firebaseConfig = {
+export const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
@@ -32,9 +33,10 @@ console.log('Firebase config', {
   measurementId: firebaseConfig.measurementId,
 });
 
-const app = initializeApp(firebaseConfig);
+export const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
 export const auth = getAuth(app);
+export const functions = getFunctions(app);
 
 let analytics: ReturnType<typeof getAnalytics> | null = null;
 isSupported()

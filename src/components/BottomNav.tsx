@@ -18,7 +18,7 @@ export default function BottomNav({ onScanClick }: BottomNavProps) {
   return (
     <nav
       aria-label="Main navigation"
-      className="safe-bottom fixed bottom-3 left-1/2 z-30 w-[calc(100%-1.5rem)] max-w-lg -translate-x-1/2 rounded-2xl border border-border/80 bg-card/90 px-1 pt-1 shadow-modal backdrop-blur-xl"
+      className="safe-bottom fixed bottom-3 left-1/2 z-30 w-[calc(100%-1.5rem)] max-w-lg -translate-x-1/2 rounded-2xl border border-border bg-card px-1 pt-1 shadow-modal lg:hidden"
     >
       <div className="flex items-end justify-around">
         {tabs.map((tab) => (

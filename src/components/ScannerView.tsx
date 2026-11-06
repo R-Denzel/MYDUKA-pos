@@ -17,6 +17,8 @@ import type {
   Html5Qrcode as Html5QrcodeInstance,
 } from 'html5-qrcode';
 import { useStore } from '@/store/useStore';
+import type { Product, ProductVariant } from '@/types/pos';
+import { formatCurrency } from '@/lib/currency';
 
 interface ScannerViewProps {
   onClose: () => void;
@@ -79,6 +81,8 @@ export default function ScannerView({
   const cartCount = useStore((state) =>
     state.cart.reduce((count, item) => count + item.qty, 0),
   );
+  const displayCurrency = useStore((state) => state.displayCurrency);
+  const exchangeRates = useStore((state) => state.exchangeRates);
   const [manualCode, setManualCode] = useState('');
   const [showManual, setShowManual] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
@@ -92,6 +96,7 @@ export default function ScannerView({
   const [zoomSettings, setZoomSettings] = useState<ZoomSettings | null>(null);
   const [lastScan, setLastScan] = useState<{ code: string; name?: string } | null>(null);
   const [unknownBarcode, setUnknownBarcode] = useState('');
+  const [variantProduct, setVariantProduct] = useState<Product | null>(null);
   const scannerRef = useRef<Html5QrcodeInstance | null>(null);
   const cameraCapabilitiesRef = useRef<CameraCapabilities | null>(null);
   const pendingCameraStopRef = useRef<Promise<void>>(Promise.resolve());
@@ -140,6 +145,14 @@ export default function ScannerView({
 
       const product = getProductByBarcode(cleanedCode);
       if (product) {
+        if (product.hasVariants && product.variants.length > 0) {
+          setVariantProduct(product);
+          setLastScan({ code: cleanedCode, name: product.name });
+          setUnknownBarcode('');
+          setManualCode('');
+          return;
+        }
+
         addToCart({
           productId: product.id,
           name: product.name,
@@ -159,6 +172,19 @@ export default function ScannerView({
     },
     [addToCart, getProductByBarcode, onBarcodeDetected, onClose],
   );
+
+  const addVariantToCart = (product: Product, variant: ProductVariant) => {
+    addToCart({
+      productId: product.id,
+      variantId: variant.id,
+      name: product.name,
+      variantName: variant.name,
+      price: variant.price,
+      qty: 1,
+    });
+    setVariantProduct(null);
+    toast.success(`${product.name} (${variant.name}) added to cart`);
+  };
 
   useEffect(() => {
     if (showManual) {
@@ -609,6 +635,49 @@ export default function ScannerView({
               </button>
             </div>
           )}
+        </div>
+      )}
+      {variantProduct && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4">
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="variant-choice-title"
+            className="max-h-[80vh] w-full max-w-md overflow-y-auto rounded-3xl bg-card p-5 text-foreground shadow-modal"
+          >
+            <h2 id="variant-choice-title" className="text-lg font-bold">
+              Choose {variantProduct.name} option
+            </h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Each package is tracked using its own stock count.
+            </p>
+            <div className="mt-4 space-y-2">
+              {variantProduct.variants.map((variant) => (
+                <button
+                  key={variant.id}
+                  type="button"
+                  disabled={variant.stock <= 0}
+                  onClick={() => addVariantToCart(variantProduct, variant)}
+                  className="flex min-h-14 w-full items-center justify-between gap-3 rounded-xl border border-border px-4 py-3 text-left disabled:opacity-40"
+                >
+                  <span>
+                    <span className="block font-semibold">{variant.name}</span>
+                    <span className="text-xs text-muted-foreground">{variant.stock} available</span>
+                  </span>
+                  <span className="shrink-0 text-sm font-bold tabular-nums">
+                    {formatCurrency(variant.price, displayCurrency, exchangeRates)}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={() => setVariantProduct(null)}
+              className="mt-4 min-h-11 w-full rounded-xl border border-border font-semibold"
+            >
+              Cancel
+            </button>
+          </section>
         </div>
       )}
     </div>

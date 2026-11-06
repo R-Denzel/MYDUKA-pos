@@ -21,6 +21,14 @@ const storeMocks = vi.hoisted(() => ({
   addToCart: vi.fn(),
   addProduct: vi.fn(),
   cart: [] as Array<{ qty: number }>,
+  displayCurrency: 'UGX',
+  exchangeRates: { UGX: 1, KES: 28.5, USD: 3800 },
+}));
+
+const toastMocks = vi.hoisted(() => ({
+  success: vi.fn(),
+  error: vi.fn(),
+  info: vi.fn(),
 }));
 
 vi.mock('html5-qrcode', () => {
@@ -97,6 +105,10 @@ vi.mock('@/store/useStore', () => ({
     selector ? selector(storeMocks) : storeMocks,
 }));
 
+vi.mock('sonner', () => ({
+  toast: toastMocks,
+}));
+
 const product = {
   id: 'product-1',
   name: 'Tea',
@@ -143,6 +155,34 @@ describe('ScannerView', () => {
     expect(storeMocks.addToCart).toHaveBeenCalledTimes(2);
     expect(onClose).not.toHaveBeenCalled();
     expect(screen.getByText('Tea added')).toBeInTheDocument();
+  });
+
+  it('lets the cashier choose a package variant before adding it to the cart', async () => {
+    storeMocks.getProductByBarcode.mockReturnValueOnce({
+      ...product,
+      hasVariants: true,
+      variants: [
+        { id: 'bottle', name: 'Single bottle', price: 2500, stock: 8 },
+        { id: 'carton', name: 'Carton of 12', price: 27000, stock: 2 },
+      ],
+    });
+
+    render(<ScannerView onClose={vi.fn()} onAddNewProduct={vi.fn()} />);
+    await waitFor(() => expect(scannerMocks.start).toHaveBeenCalledTimes(1));
+    scan('123456');
+
+    expect(screen.getByRole('dialog', { name: 'Choose Tea option' })).toBeInTheDocument();
+    expect(storeMocks.addToCart).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: /Carton of 12/ }));
+
+    expect(storeMocks.addToCart).toHaveBeenCalledWith({
+      productId: 'product-1',
+      variantId: 'carton',
+      name: 'Tea',
+      variantName: 'Carton of 12',
+      price: 27000,
+      qty: 1,
+    });
   });
 
   it('allows the same product to be scanned again after it leaves the frame', async () => {
@@ -246,5 +286,42 @@ describe('ScannerView', () => {
     expect(onBarcodeDetected).toHaveBeenCalledWith('987654321');
     expect(onClose).toHaveBeenCalledOnce();
     expect(storeMocks.getProductByBarcode).not.toHaveBeenCalled();
+  });
+
+  it('confirms when a product is saved', async () => {
+    const onClose = vi.fn();
+    render(<AddProductForm onClose={onClose} />);
+
+    fireEvent.change(screen.getByPlaceholderText('e.g. Coca-Cola 500ml'), {
+      target: { value: 'Cola' },
+    });
+    fireEvent.change(screen.getAllByRole('spinbutton')[0], {
+      target: { value: '2500' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => {
+      expect(toastMocks.success).toHaveBeenCalledWith('Cola saved to inventory');
+    });
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('shows an error when saving a product fails', async () => {
+    storeMocks.addProduct.mockRejectedValueOnce(new Error('Save failed'));
+    const onClose = vi.fn();
+    render(<AddProductForm onClose={onClose} />);
+
+    fireEvent.change(screen.getByPlaceholderText('e.g. Coca-Cola 500ml'), {
+      target: { value: 'Cola' },
+    });
+    fireEvent.change(screen.getAllByRole('spinbutton')[0], {
+      target: { value: '2500' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => {
+      expect(toastMocks.error).toHaveBeenCalledWith('Could not save product. Please try again.');
+    });
+    expect(onClose).not.toHaveBeenCalled();
   });
 });

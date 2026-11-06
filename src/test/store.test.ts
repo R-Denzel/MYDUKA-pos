@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { useStore } from '@/store/useStore';
+import { setLocalPremiumDemoEnabled, useStore } from '@/store/useStore';
 import { Product, CartItem, PaymentMethod } from '@/types/pos';
 
 describe('useStore - POS Store Tests', () => {
@@ -7,6 +7,7 @@ describe('useStore - POS Store Tests', () => {
 
   beforeEach(() => {
     // Reset store before each test
+    setLocalPremiumDemoEnabled(false);
     useStore.setState({ products: [], cart: [], sales: [], activeTab: 'home' });
     store = useStore.getState();
   });
@@ -203,7 +204,7 @@ describe('useStore - POS Store Tests', () => {
       store.addProduct(product);
     });
 
-    it('should complete a sale and deduct stock', () => {
+    it('should complete a sale and deduct stock', async () => {
       store.addToCart({
         productId: 'prod1',
         name: 'Test Product',
@@ -211,7 +212,7 @@ describe('useStore - POS Store Tests', () => {
         qty: 3,
       });
 
-      const sale = store.completeSale('cash');
+      const sale = await store.completeSale('cash');
       
       expect(sale).toBeDefined();
       expect(sale?.total).toBe(15000);
@@ -219,8 +220,59 @@ describe('useStore - POS Store Tests', () => {
       expect(useStore.getState().cart).toHaveLength(0); // Cart cleared
     });
 
-    it('should not complete sale with empty cart', () => {
-      const sale = store.completeSale('cash');
+    it('does not apply saved Premium discounts or VAT without Premium access', async () => {
+      useStore.getState().setVatSettings({
+        enabled: true,
+        rate: 10,
+        inclusive: false,
+        country: 'Custom',
+      });
+      store.addToCart({
+        productId: 'prod1',
+        name: 'Test Product',
+        price: 1000,
+        qty: 1,
+        discountType: 'fixed',
+        discountValue: 100,
+      });
+
+      expect(store.cartTotal()).toBe(1000);
+      const sale = await store.completeSale('cash');
+
+      expect(sale?.total).toBe(1000);
+      expect(sale?.discountTotal).toBe(0);
+      expect(sale?.vatAmount).toBe(0);
+      expect(sale?.items[0].discountValue).toBeUndefined();
+    });
+
+    it('can complete Premium demo sales locally without an owner account', async () => {
+      setLocalPremiumDemoEnabled(true);
+      useStore.getState().setVatSettings({
+        enabled: true,
+        rate: 10,
+        inclusive: false,
+        country: 'Custom',
+      });
+      store.addToCart({
+        productId: 'prod1',
+        name: 'Test Product',
+        price: 1000,
+        qty: 1,
+        discountType: 'percentage',
+        discountValue: 10,
+      });
+
+      const sale = await store.completeSale('cash', undefined, true);
+
+      expect(sale?.total).toBe(990);
+      expect(sale?.discountTotal).toBe(100);
+      expect(sale?.vatAmount).toBe(90);
+      expect(sale?.ownerUid).toBeUndefined();
+      expect(useStore.getState().sales).toContain(sale);
+    });
+
+    it('should not complete sale with empty cart', async () => {
+      const sale = await store.completeSale('cash');
       expect(sale).toBeNull();
     });
 

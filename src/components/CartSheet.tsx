@@ -1,16 +1,26 @@
 import { useStore } from '@/store/useStore';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Minus, Plus, Banknote, Smartphone, CreditCard, CheckCircle2 } from 'lucide-react';
+import { X, Minus, Plus, Banknote, Smartphone, CreditCard, CheckCircle2, LockKeyhole } from 'lucide-react';
 import { useState } from 'react';
 import { PaymentMethod } from '@/types/pos';
 import { formatCurrency } from '@/lib/currency';
+import { calculateSaleTotals, getBillableItems } from '@/lib/pricing';
+import { auth } from '@/lib/firebase';
+import { toast } from 'sonner';
 
 interface CartSheetProps {
   open: boolean;
   onClose: () => void;
+  hasPremium?: boolean;
+  onOpenSettings?: () => void;
 }
 
-export default function CartSheet({ open, onClose }: CartSheetProps) {
+export default function CartSheet({
+  open,
+  onClose,
+  hasPremium = false,
+  onOpenSettings = () => undefined,
+}: CartSheetProps) {
   const {
     cart,
     cartTotal,
@@ -20,19 +30,38 @@ export default function CartSheet({ open, onClose }: CartSheetProps) {
     clearCart,
     displayCurrency,
     exchangeRates,
+    updateCartDiscount,
+    vatEnabled,
+    vatRate,
+    vatInclusive,
   } = useStore();
   const [showPayment, setShowPayment] = useState(false);
   const [saleComplete, setSaleComplete] = useState(false);
   const [completedTotal, setCompletedTotal] = useState(0);
+  const [paymentInProgress, setPaymentInProgress] = useState(false);
 
-  const total = cartTotal();
+  const total = cartTotal(hasPremium);
+  const totals = calculateSaleTotals(getBillableItems(cart, hasPremium), {
+    enabled: hasPremium && vatEnabled,
+    rate: vatRate,
+    inclusive: vatInclusive,
+  });
 
-  const handlePayment = (method: PaymentMethod) => {
-    const sale = completeSale(method);
-    if (sale) {
-      setCompletedTotal(sale.total);
-      setSaleComplete(true);
-      setShowPayment(false);
+  const handlePayment = async (method: PaymentMethod) => {
+    if (paymentInProgress) return;
+    setPaymentInProgress(true);
+    try {
+      const sale = await completeSale(method, auth.currentUser?.uid, hasPremium);
+      if (sale) {
+        setCompletedTotal(sale.total);
+        setSaleComplete(true);
+        setShowPayment(false);
+      }
+    } catch (error) {
+      console.error('Sale checkout failed', error);
+      toast.error('Sale could not be completed. Please try again.');
+    } finally {
+      setPaymentInProgress(false);
     }
   };
 
@@ -109,8 +138,9 @@ export default function CartSheet({ open, onClose }: CartSheetProps) {
                   ].map(({ method, label, icon: Icon }) => (
                     <button
                       key={method}
-                      onClick={() => handlePayment(method)}
-                      className="flex items-center gap-4 bg-muted rounded-lg p-4 active-scale touch-target text-left"
+                      onClick={() => void handlePayment(method)}
+                      disabled={paymentInProgress}
+                      className="flex items-center gap-4 bg-muted rounded-lg p-4 active-scale touch-target text-left disabled:opacity-50"
                     >
                       <div className="w-12 h-12 rounded-lg bg-accent/10 flex items-center justify-center">
                         <Icon className="w-6 h-6 text-accent" />
@@ -147,6 +177,51 @@ export default function CartSheet({ open, onClose }: CartSheetProps) {
                         <p className="text-meta font-semibold tabular-nums mt-0.5">
                           {formatCurrency(item.price, displayCurrency, exchangeRates)}
                         </p>
+                        <div className="no-print mt-2 flex flex-wrap items-center gap-2">
+                          {hasPremium ? (
+                            <>
+                              <select
+                                aria-label={`Discount type for ${item.name}`}
+                                value={item.discountType || 'percentage'}
+                                onChange={(event) => updateCartDiscount(
+                                  item.productId,
+                                  item.variantId,
+                                  event.target.value as 'percentage' | 'fixed',
+                                  item.discountValue || 0,
+                                )}
+                                className="rounded-lg border border-border bg-card px-2 py-1 text-xs"
+                              >
+                                <option value="percentage">% off</option>
+                                <option value="fixed">UGX off</option>
+                              </select>
+                              <input
+                                aria-label={`Discount amount for ${item.name}`}
+                                type="number"
+                                min="0"
+                                max={item.discountType === 'percentage' ? 100 : item.price}
+                                step="0.01"
+                                value={item.discountValue || ''}
+                                onChange={(event) => updateCartDiscount(
+                                  item.productId,
+                                  item.variantId,
+                                  item.discountType || 'percentage',
+                                  Number(event.target.value),
+                                )}
+                                placeholder="Discount"
+                                className="w-24 rounded-lg border border-border bg-card px-2 py-1 text-xs"
+                              />
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={onOpenSettings}
+                              className="inline-flex items-center gap-1 text-xs font-semibold text-muted-foreground"
+                            >
+                              <LockKeyhole className="h-3 w-3" />
+                              Premium discount
+                            </button>
+                          )}
+                        </div>
                       </div>
                       <div className="flex items-center gap-2">
                         <button
@@ -182,6 +257,24 @@ export default function CartSheet({ open, onClose }: CartSheetProps) {
 
                 {cart.length > 0 && (
                   <div className="px-4 pt-3 pb-2 border-t border-border">
+                    <div className="mb-3 space-y-1 text-xs">
+                      <div className="flex justify-between text-muted-foreground">
+                        <span>Subtotal after discounts</span>
+                        <span>{formatCurrency(totals.subtotal, displayCurrency, exchangeRates)}</span>
+                      </div>
+                      {totals.discountTotal > 0 && (
+                        <div className="flex justify-between text-muted-foreground">
+                          <span>Item discounts</span>
+                          <span>-{formatCurrency(totals.discountTotal, displayCurrency, exchangeRates)}</span>
+                        </div>
+                      )}
+                      {hasPremium && vatEnabled && (
+                        <div className="flex justify-between text-muted-foreground">
+                          <span>VAT ({vatRate}%{vatInclusive ? ', included' : ''})</span>
+                          <span>{formatCurrency(totals.vatAmount, displayCurrency, exchangeRates)}</span>
+                        </div>
+                      )}
+                    </div>
                     <button
                       onClick={() => setShowPayment(true)}
                       className="w-full bg-primary text-primary-foreground rounded-lg py-4 text-body font-bold active-scale touch-target"

@@ -14,6 +14,13 @@ import {
 import { db } from '@/lib/firebase';
 import { Product, CartItem, Sale, PaymentMethod } from '@/types/pos';
 import { ExchangeRates, FALLBACK_EXCHANGE_RATES, Currency } from '@/lib/currency';
+import { calculateSaleTotals, getBillableItems } from '@/lib/pricing';
+
+let localPremiumDemoEnabled = false;
+
+export function setLocalPremiumDemoEnabled(enabled: boolean) {
+  localPremiumDemoEnabled = enabled;
+}
 
 interface POSStore {
   loadProductsFromFirestore: () => Promise<void>;
@@ -30,11 +37,15 @@ interface POSStore {
   removeFromCart: (productId: string, variantId?: string) => void;
   updateCartQty: (productId: string, qty: number, variantId?: string) => void;
   clearCart: () => void;
-  cartTotal: () => number;
+  cartTotal: (hasPremium?: boolean) => number;
 
   // Sales
   sales: Sale[];
-  completeSale: (paymentMethod: PaymentMethod) => Sale | null;
+  completeSale: (
+    paymentMethod: PaymentMethod,
+    ownerUid?: string,
+    hasPremium?: boolean,
+  ) => Promise<Sale | null>;
   todaySales: () => Sale[];
   todayTotal: () => number;
 
@@ -46,6 +57,24 @@ interface POSStore {
   exchangeRates: ExchangeRates;
   ratesUpdatedAt: string | null;
   setExchangeRates: (rates: ExchangeRates, updatedAt: string) => void;
+  vatEnabled: boolean;
+  vatRate: number;
+  vatInclusive: boolean;
+  vatCountry: 'Uganda' | 'Kenya' | 'Custom';
+  setVatSettings: (settings: {
+    enabled: boolean;
+    rate: number;
+    inclusive: boolean;
+    country: 'Uganda' | 'Kenya' | 'Custom';
+  }) => void;
+  updateCartDiscount: (
+    productId: string,
+    variantId: string | undefined,
+    discountType: 'percentage' | 'fixed',
+    discountValue: number,
+  ) => void;
+  notificationOwnerUid: string | null;
+  setNotificationOwnerUid: (uid: string | null) => void;
 }
 
 export const useStore = create<POSStore>()(
@@ -58,9 +87,15 @@ export const useStore = create<POSStore>()(
       displayCurrency: 'UGX',
       exchangeRates: FALLBACK_EXCHANGE_RATES,
       ratesUpdatedAt: null,
+      vatEnabled: false,
+      vatRate: 18,
+      vatInclusive: false,
+      vatCountry: 'Uganda',
+      notificationOwnerUid: null,
 
       addProduct: async (product) => {
         set((s) => ({ products: [...s.products, product] }));
+        if (localPremiumDemoEnabled) return;
         try {
           await setDoc(doc(db, 'products', product.id), product);
         } catch (err) {
@@ -74,6 +109,7 @@ export const useStore = create<POSStore>()(
             p.id === id ? { ...p, ...updates } : p
           ),
         }));
+        if (localPremiumDemoEnabled) return;
         try {
           const productRef = doc(db, 'products', id);
           const existing = await getDoc(productRef);
@@ -126,12 +162,26 @@ export const useStore = create<POSStore>()(
                 ),
         })),
 
+      updateCartDiscount: (productId, variantId, discountType, discountValue) =>
+        set((s) => ({
+          cart: s.cart.map((item) =>
+            item.productId === productId && item.variantId === variantId
+              ? { ...item, discountType, discountValue: Math.max(0, discountValue) }
+              : item,
+          ),
+        })),
+
       clearCart: () => set({ cart: [] }),
 
-      cartTotal: () =>
-        get().cart.reduce((sum, item) => sum + item.price * item.qty, 0),
+      cartTotal: (hasPremium = false) =>
+        calculateSaleTotals(getBillableItems(get().cart, hasPremium), {
+          enabled: hasPremium && get().vatEnabled,
+          rate: get().vatRate,
+          inclusive: get().vatInclusive,
+        }).total,
 
       loadProductsFromFirestore: async () => {
+        if (localPremiumDemoEnabled) return;
         try {
           const snapshot = await getDocs(collection(db, 'products'));
           const products: Product[] = snapshot.docs.map((doc) => doc.data() as Product);
@@ -142,6 +192,7 @@ export const useStore = create<POSStore>()(
       },
 
       loadSalesFromFirestore: async () => {
+        if (localPremiumDemoEnabled) return;
         try {
           const snapshot = await getDocs(
             query(collection(db, 'sales'), orderBy('timestamp', 'desc'), limit(200))
@@ -153,11 +204,17 @@ export const useStore = create<POSStore>()(
         }
       },
 
-      completeSale: async (paymentMethod) => {
+      completeSale: async (paymentMethod, ownerUid, hasPremium = false) => {
         const { cart, products } = get();
         if (cart.length === 0) return null;
 
-        const total = cart.reduce((sum, item) => sum + (item.price || 0) * (item.qty || 0), 0);
+        const saleItems = getBillableItems(cart, hasPremium);
+        const vatEnabled = hasPremium && get().vatEnabled;
+        const { subtotal, discountTotal, vatAmount, total } = calculateSaleTotals(saleItems, {
+          enabled: vatEnabled,
+          rate: get().vatRate,
+          inclusive: get().vatInclusive,
+        });
 
         const getUuid = () => {
           if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -168,8 +225,17 @@ export const useStore = create<POSStore>()(
 
         const sale: Sale = {
           id: getUuid(),
-          items: [...cart],
+          items: saleItems,
           total,
+          subtotal,
+          discountTotal,
+          vatAmount,
+          vatRate: vatEnabled ? get().vatRate : 0,
+          vatInclusive: vatEnabled && get().vatInclusive,
+          ...(vatEnabled ? { vatCountry: get().vatCountry } : {}),
+          ...((get().notificationOwnerUid || ownerUid)
+            ? { ownerUid: get().notificationOwnerUid || ownerUid }
+            : {}),
           paymentMethod,
           timestamp: new Date().toISOString(),
         };
@@ -206,16 +272,15 @@ export const useStore = create<POSStore>()(
           cart: [],
         });
 
-        try {
-          await addDoc(collection(db, 'sales'), sale);
-          // update products in firestore
-          await Promise.all(
-            updatedProducts.map((product) =>
+        if (!localPremiumDemoEnabled) {
+          void Promise.all([
+            addDoc(collection(db, 'sales'), sale),
+            ...updatedProducts.map((product) =>
               setDoc(doc(db, 'products', product.id), product)
-            )
-          );
-        } catch (err) {
-          console.warn('Failed to persist sale to Firebase', err);
+            ),
+          ]).catch((err) => {
+            console.warn('Failed to persist sale to Firebase', err);
+          });
         }
 
         return sale;
@@ -239,6 +304,15 @@ export const useStore = create<POSStore>()(
       setDisplayCurrency: (currency) => set({ displayCurrency: currency }),
       setExchangeRates: (exchangeRates, ratesUpdatedAt) =>
         set({ exchangeRates, ratesUpdatedAt }),
+      setVatSettings: ({ enabled, rate, inclusive, country }) =>
+        set({
+          vatEnabled: enabled,
+          vatRate: Math.max(0, Math.min(100, rate)),
+          vatInclusive: inclusive,
+          vatCountry: country,
+        }),
+      setNotificationOwnerUid: (notificationOwnerUid) =>
+        set({ notificationOwnerUid }),
     }),
     {
       name: 'duka-pos-storage',

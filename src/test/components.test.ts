@@ -11,6 +11,22 @@ type UseStoreMock = { mockReturnValue: (value: Partial<StoreReturnType>) => void
 // Mock zustand store
 vi.mock('@/store/useStore');
 
+const createMockStore = (overrides: Partial<StoreReturnType> = {}) => ({
+  cart: [],
+  cartTotal: () => 0,
+  updateCartQty: vi.fn(),
+  removeFromCart: vi.fn(),
+  completeSale: vi.fn(),
+  clearCart: vi.fn(),
+  displayCurrency: 'UGX' as const,
+  exchangeRates: { UGX: 1, KES: 28.5, USD: 3800 },
+  updateCartDiscount: vi.fn(),
+  vatEnabled: false,
+  vatRate: 18,
+  vatInclusive: false,
+  ...overrides,
+});
+
 describe('CartSheet Component', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -18,31 +34,17 @@ describe('CartSheet Component', () => {
 
   it('should render cart sheet when open', () => {
     const mockUseStore = useStore as unknown as UseStoreMock;
-    mockUseStore.mockReturnValue({
-      cart: [],
-      cartTotal: () => 0,
-      updateCartQty: vi.fn(),
-      removeFromCart: vi.fn(),
-      completeSale: vi.fn(),
-      clearCart: vi.fn(),
-    });
+    mockUseStore.mockReturnValue(createMockStore());
 
     render(React.createElement(CartSheet, { open: true, onClose: vi.fn() }));
     
-    // Should render without crashing
-    expect(screen.queryByText(/Payment/i)).toBeInTheDocument();
+    expect(screen.getByText('Cart (0)')).toBeInTheDocument();
+    expect(screen.getByText('Cart is empty')).toBeInTheDocument();
   });
 
   it('should not render cart sheet when closed', () => {
     const mockUseStore = useStore as unknown as UseStoreMock;
-    mockUseStore.mockReturnValue({
-      cart: [],
-      cartTotal: () => 0,
-      updateCartQty: vi.fn(),
-      removeFromCart: vi.fn(),
-      completeSale: vi.fn(),
-      clearCart: vi.fn(),
-    });
+    mockUseStore.mockReturnValue(createMockStore());
 
     render(React.createElement(CartSheet, { open: false, onClose: vi.fn() }));
     
@@ -53,46 +55,36 @@ describe('CartSheet Component', () => {
 
   it('should calculate and display cart total correctly', () => {
     const mockUseStore = useStore as unknown as UseStoreMock;
-    mockUseStore.mockReturnValue({
+    mockUseStore.mockReturnValue(createMockStore({
       cart: [
         { productId: '1', name: 'Item 1', price: 5000, qty: 2 },
         { productId: '2', name: 'Item 2', price: 3000, qty: 1 },
       ],
       cartTotal: () => 13000,
-      updateCartQty: vi.fn(),
-      removeFromCart: vi.fn(),
-      completeSale: vi.fn(),
-      clearCart: vi.fn(),
-    });
+    }));
 
     render(React.createElement(CartSheet, { open: true, onClose: vi.fn() }));
     
     // Total should be displayed (formatting may vary)
-    expect(screen.getByText(/UGX/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Charge UGX 13,000/i })).toBeInTheDocument();
   });
 
   it('BUG REPORT: should handle empty cart gracefully', () => {
     const mockUseStore = useStore as unknown as UseStoreMock;
-    mockUseStore.mockReturnValue({
-      cart: [],
-      cartTotal: () => 0,
-      updateCartQty: vi.fn(),
-      removeFromCart: vi.fn(),
-      completeSale: () => null, // No sale if cart empty
-      clearCart: vi.fn(),
-    });
+    mockUseStore.mockReturnValue(createMockStore({
+      completeSale: () => null,
+    }));
 
     render(React.createElement(CartSheet, { open: true, onClose: vi.fn() }));
     
     // Should not allow checkout with empty cart
-    const payButton = screen.queryByRole('button', { name: /proceed|checkout/i });
-    // Empty cart state should be handled
-    expect(screen.queryByText(/Item/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Charge/ })).not.toBeInTheDocument();
+    expect(screen.getByText('Cart is empty')).toBeInTheDocument();
   });
 });
 
 describe('CartSheet - Payment Methods', () => {
-  it('should support cash payment', () => {
+  it('should support cash payment', async () => {
     const mockcompleteSale = vi.fn(() => ({
       id: '1',
       items: [],
@@ -102,23 +94,20 @@ describe('CartSheet - Payment Methods', () => {
     }));
 
     const mockUseStore = useStore as unknown as UseStoreMock;
-    mockUseStore.mockReturnValue({
+    mockUseStore.mockReturnValue(createMockStore({
       cart: [{ productId: '1', name: 'Item', price: 5000, qty: 1 }],
       cartTotal: () => 5000,
-      updateCartQty: vi.fn(),
-      removeFromCart: vi.fn(),
       completeSale: mockcompleteSale,
-      clearCart: vi.fn(),
-    });
+    }));
 
     render(React.createElement(CartSheet, { open: true, onClose: vi.fn() }));
-    
-    // User should be able to select cash
-    // This would require interactive testing with payment method buttons
-    expect(mockcompleteSale).toBeDefined();
+    fireEvent.click(screen.getByRole('button', { name: /Charge UGX 5,000/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cash' }));
+
+    await waitFor(() => expect(mockcompleteSale).toHaveBeenCalledWith('cash', undefined, false));
   });
 
-  it('should support mobile money payment', () => {
+  it('should support mobile money payment', async () => {
     const mockcompleteSale = vi.fn(() => ({
       id: '1',
       items: [],
@@ -128,15 +117,16 @@ describe('CartSheet - Payment Methods', () => {
     }));
 
     const mockUseStore = useStore as unknown as UseStoreMock;
-    mockUseStore.mockReturnValue({
+    mockUseStore.mockReturnValue(createMockStore({
       cart: [{ productId: '1', name: 'Item', price: 5000, qty: 1 }],
       cartTotal: () => 5000,
-      updateCartQty: vi.fn(),
-      removeFromCart: vi.fn(),
       completeSale: mockcompleteSale,
-      clearCart: vi.fn(),
-    });
+    }));
 
-    expect(mockcompleteSale).toBeDefined();
+    render(React.createElement(CartSheet, { open: true, onClose: vi.fn() }));
+    fireEvent.click(screen.getByRole('button', { name: /Charge UGX 5,000/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Mobile Money' }));
+
+    await waitFor(() => expect(mockcompleteSale).toHaveBeenCalledWith('mobile_money', undefined, false));
   });
 });

@@ -1,7 +1,10 @@
 import { useState } from 'react';
 import { useStore } from '@/store/useStore';
-import { Search, Plus, Package, ScanBarcode } from 'lucide-react';
+import { Search, Plus, Package, ScanBarcode, Barcode, LockKeyhole } from 'lucide-react';
 import { formatCurrency } from '@/lib/currency';
+import { toast } from 'sonner';
+import BarcodeLabel from '@/components/BarcodeLabel';
+import { Product } from '@/types/pos';
 
 function getStockColor(stock: number) {
   if (stock < 5) return 'text-destructive';
@@ -11,11 +14,14 @@ function getStockColor(stock: number) {
 
 interface InventoryListProps {
   onAddProduct: () => void;
+  hasPremium: boolean;
+  onOpenSettings: () => void;
 }
 
-export default function InventoryList({ onAddProduct }: InventoryListProps) {
+export default function InventoryList({ onAddProduct, hasPremium, onOpenSettings }: InventoryListProps) {
   const { products, displayCurrency, exchangeRates } = useStore();
   const [search, setSearch] = useState('');
+  const [selectedBarcodeProduct, setSelectedBarcodeProduct] = useState<Product | null>(null);
 
   const filtered = products.filter(
     (p) =>
@@ -25,10 +31,10 @@ export default function InventoryList({ onAddProduct }: InventoryListProps) {
   );
 
   return (
-    <div className="pb-32">
+    <div className="pb-32 lg:pb-10">
       <div className="mx-auto flex max-w-6xl items-end justify-between gap-4 px-4 pb-4 pt-7 sm:px-6 lg:px-8 lg:pt-10">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-primary">Your catalogue</p>
+          <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-primary">Product catalogue</p>
           <h2 className="mt-1 text-2xl font-extrabold tracking-tight sm:text-3xl">Inventory</h2>
           <p className="mt-1 text-sm text-muted-foreground">
             {products.length} product{products.length === 1 ? '' : 's'} in your shop
@@ -45,7 +51,7 @@ export default function InventoryList({ onAddProduct }: InventoryListProps) {
         </button>
       </div>
 
-      <div className="sticky top-[4.5rem] z-10 border-y border-border/70 bg-background/90 px-4 py-3 backdrop-blur-xl sm:px-6 lg:px-8">
+      <div className="sticky top-[4.5rem] z-10 border-y border-border bg-background px-4 py-3 sm:px-6 lg:static lg:border-0 lg:bg-transparent lg:px-0 lg:pb-1">
         <div className="mx-auto max-w-6xl">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -54,7 +60,7 @@ export default function InventoryList({ onAddProduct }: InventoryListProps) {
             placeholder="Search by name or barcode..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full rounded-xl border border-border bg-card py-3 pl-10 pr-4 text-sm shadow-card placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-accent"
+            className="w-full rounded-xl border border-border bg-card py-3 pl-10 pr-4 text-sm shadow-card placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
           />
         </div>
         </div>
@@ -87,9 +93,41 @@ export default function InventoryList({ onAddProduct }: InventoryListProps) {
                 </span>
               </div>
             </div>
-            <p className="shrink-0 text-sm font-bold tabular-nums">
-              {formatCurrency(product.basePrice, displayCurrency, exchangeRates)}
-            </p>
+            <div className="shrink-0 text-right">
+              <p className="text-sm font-bold tabular-nums">
+                {formatCurrency(
+                  product.hasVariants && product.variants.length
+                    ? Math.min(...product.variants.map((variant) => variant.price))
+                    : product.basePrice,
+                  displayCurrency,
+                  exchangeRates,
+                )}
+              </p>
+              {product.hasVariants && product.variants.length > 0 && (
+                <p className="text-[10px] text-muted-foreground">
+                  from {product.variants.length} options
+                </p>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                if (!hasPremium) {
+                  onOpenSettings();
+                  return;
+                }
+                if (!product.barcode || product.barcode.startsWith('MAN-')) {
+                  toast.error('Add a real barcode before printing a label.');
+                  return;
+                }
+                setSelectedBarcodeProduct(product);
+              }}
+              aria-label={`Print barcode for ${product.name}`}
+              title={hasPremium ? 'Print barcode label' : 'Premium: print barcode label'}
+              className="no-print rounded-lg border border-border p-2 text-muted-foreground hover:text-foreground"
+            >
+              {hasPremium ? <Barcode className="h-4 w-4" /> : <LockKeyhole className="h-4 w-4" />}
+            </button>
           </div>
         ))}
 
@@ -120,6 +158,12 @@ export default function InventoryList({ onAddProduct }: InventoryListProps) {
           </div>
         )}
       </div>
+      {selectedBarcodeProduct && (
+        <BarcodeLabel
+          product={selectedBarcodeProduct}
+          onClose={() => setSelectedBarcodeProduct(null)}
+        />
+      )}
     </div>
   );
 }
