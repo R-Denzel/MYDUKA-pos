@@ -184,7 +184,8 @@ describe('ScannerView', () => {
     quaggaMocks.getActiveTrack.mockReturnValue(null);
     scannerMocks.getCameras.mockResolvedValue([{ id: 'rear', label: 'Back camera' }]);
     storeMocks.getProductByBarcode.mockReturnValue(product);
-    storeMocks.addProduct.mockResolvedValue(undefined);
+    storeMocks.addToCart.mockReturnValue(true);
+    storeMocks.addProduct.mockResolvedValue(true);
     Object.defineProperty(window, 'isSecureContext', { configurable: true, value: true });
     Object.defineProperty(navigator, 'mediaDevices', {
       configurable: true,
@@ -240,6 +241,39 @@ describe('ScannerView', () => {
       price: 27000,
       qty: 1,
     });
+  });
+
+  it('does not add an out-of-stock scanned product to the cart or show an added confirmation', async () => {
+    storeMocks.getProductByBarcode.mockReturnValue({
+      ...product,
+      totalStock: 0,
+    });
+    storeMocks.addToCart.mockReturnValue(false);
+
+    render(<ScannerView onClose={vi.fn()} onAddNewProduct={vi.fn()} />);
+    await waitFor(() => expect(scannerMocks.start).toHaveBeenCalledTimes(1));
+    scan('123456');
+
+    expect(storeMocks.addToCart).toHaveBeenCalledOnce();
+    expect(screen.queryByText('Tea added')).not.toBeInTheDocument();
+    expect(toastMocks.error).toHaveBeenCalledWith('Tea is out of stock');
+    expect(toastMocks.success).not.toHaveBeenCalledWith('Tea added to cart');
+  });
+
+  it('does not offer an out-of-stock variant for checkout', async () => {
+    storeMocks.getProductByBarcode.mockReturnValue({
+      ...product,
+      hasVariants: true,
+      variants: [{ id: 'single', name: 'Single', price: 2500, stock: 0 }],
+    });
+
+    render(<ScannerView onClose={vi.fn()} onAddNewProduct={vi.fn()} />);
+    await waitFor(() => expect(scannerMocks.start).toHaveBeenCalledTimes(1));
+    scan('123456');
+
+    expect(storeMocks.addToCart).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog', { name: 'Choose Tea option' })).not.toBeInTheDocument();
+    expect(toastMocks.error).toHaveBeenCalledWith('Tea is out of stock');
   });
 
   it('allows the same product to be scanned again after it leaves the frame', async () => {
@@ -370,7 +404,7 @@ describe('ScannerView', () => {
     expect(storeMocks.getProductByBarcode).not.toHaveBeenCalled();
   });
 
-  it('confirms when a product is saved', async () => {
+  it('shows a visible confirmation when a product is saved', async () => {
     const onClose = vi.fn();
     render(<AddProductForm onClose={onClose} />);
 
@@ -385,6 +419,10 @@ describe('ScannerView', () => {
     await waitFor(() => {
       expect(toastMocks.success).toHaveBeenCalledWith('Cola saved to inventory');
     });
+    expect(screen.getByRole('status')).toHaveTextContent('Product saved to inventory');
+    expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
     expect(onClose).toHaveBeenCalledOnce();
   });
 

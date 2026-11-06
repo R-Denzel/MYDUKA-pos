@@ -106,6 +106,20 @@ describe('useStore - POS Store Tests', () => {
       expect(useStore.getState().cart[0].qty).toBe(1);
     });
 
+    it('does not add an out-of-stock product to cart', () => {
+      store.updateProduct('prod1', { totalStock: 0 });
+
+      const added = store.addToCart({
+        productId: 'prod1',
+        name: 'Test Product',
+        price: 5000,
+        qty: 1,
+      });
+
+      expect(added).toBe(false);
+      expect(useStore.getState().cart).toHaveLength(0);
+    });
+
     it('should increment quantity when adding duplicate item', () => {
       const cartItem: CartItem = {
         productId: 'prod1',
@@ -290,21 +304,35 @@ describe('useStore - POS Store Tests', () => {
       expect(sales[0].paymentMethod).toBe('mobile_money');
     });
 
-    it('should not allow stock to go below 0', () => {
+    it('rejects adding more than available stock to cart', () => {
       store.addToCart({
         productId: 'prod1',
         name: 'Test Product',
         price: 5000,
-        qty: 20, // More than available stock
+        qty: 20,
       });
 
-      store.completeSale('cash');
-      
-      expect(useStore.getState().products[0].totalStock).toBe(0); // Should be 0, not negative
+      expect(useStore.getState().cart).toHaveLength(0);
+      expect(useStore.getState().products[0].totalStock).toBe(10);
     });
 
-    it('BUG REPORT: should handle variant stock deduction correctly', () => {
-      // This test documents the current buggy behavior
+    it('rejects checkout if stock changed after an item entered the cart', async () => {
+      store.addToCart({
+        productId: 'prod1',
+        name: 'Test Product',
+        price: 5000,
+        qty: 2,
+      });
+      store.updateProduct('prod1', { totalStock: 1 });
+
+      await expect(store.completeSale('cash')).rejects.toThrow(
+        'Insufficient stock for Test Product. 1 available.',
+      );
+      expect(useStore.getState().sales).toHaveLength(0);
+      expect(useStore.getState().cart).toHaveLength(1);
+    });
+
+    it('blocks out-of-stock product variants from cart and checkout', async () => {
       const productWithVariants: Product = {
         id: 'prod2',
         name: 'Shirt',
@@ -321,24 +349,27 @@ describe('useStore - POS Store Tests', () => {
       };
 
       store.addProduct(productWithVariants);
-
-      // Add variant to cart
-      store.addToCart({
+      const added = store.addToCart({
         productId: 'prod2',
         variantId: 'var1',
         name: 'Shirt',
         variantName: 'Blue-M',
         price: 15000,
-        qty: 2,
+        qty: 1,
+      });
+      expect(added).toBe(true);
+
+      store.updateProduct('prod2', {
+        variants: [
+          { id: 'var1', name: 'Blue-M', price: 15000, stock: 0 },
+          { id: 'var2', name: 'Red-M', price: 15000, stock: 5 },
+        ],
       });
 
-      const sale = store.completeSale('cash');
-      
-      // EXPECTED: Blue-M stock should be 3 (5 - 2)
-      // ACTUAL: Complex logic may have issues
-      const variant = useStore.getState().products[1].variants[0];
-      console.log('Variant stock after sale:', variant.stock);
-      // This is known to have bugs - documenting for fix
+      await expect(store.completeSale('cash')).rejects.toThrow(
+        'Insufficient stock for Shirt (Blue-M). 0 available.',
+      );
+      expect(useStore.getState().sales).toHaveLength(0);
     });
   });
 

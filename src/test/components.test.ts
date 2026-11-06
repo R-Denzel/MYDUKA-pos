@@ -11,8 +11,21 @@ type UseStoreMock = { mockReturnValue: (value: Partial<StoreReturnType>) => void
 // Mock zustand store
 vi.mock('@/store/useStore');
 
-const createMockStore = (overrides: Partial<StoreReturnType> = {}) => ({
-  cart: [],
+const createMockStore = (overrides: Partial<StoreReturnType> = {}) => {
+  const cart = overrides.cart ?? [];
+  return ({
+  cart,
+  products: overrides.products ?? cart.map((item) => ({
+    id: item.productId,
+    name: item.name,
+    barcode: '',
+    category: 'Other',
+    basePrice: item.price,
+    hasVariants: false,
+    variants: [],
+    totalStock: 10,
+    createdAt: new Date().toISOString(),
+  })),
   cartTotal: () => 0,
   updateCartQty: vi.fn(),
   removeFromCart: vi.fn(),
@@ -25,7 +38,8 @@ const createMockStore = (overrides: Partial<StoreReturnType> = {}) => ({
   vatRate: 18,
   vatInclusive: false,
   ...overrides,
-});
+  });
+};
 
 describe('CartSheet Component', () => {
   beforeEach(() => {
@@ -67,6 +81,30 @@ describe('CartSheet Component', () => {
     
     // Total should be displayed (formatting may vary)
     expect(screen.getByRole('button', { name: /Charge UGX 13,000/i })).toBeInTheDocument();
+  });
+
+  it('blocks checkout when a cart item no longer has stock', () => {
+    const mockUseStore = useStore as unknown as UseStoreMock;
+    mockUseStore.mockReturnValue(createMockStore({
+      cart: [{ productId: '1', name: 'Item 1', price: 5000, qty: 1 }],
+      cartTotal: () => 5000,
+      products: [{
+        id: '1',
+        name: 'Item 1',
+        barcode: 'ITEM1',
+        category: 'Food',
+        basePrice: 5000,
+        hasVariants: false,
+        variants: [],
+        totalStock: 0,
+        createdAt: new Date().toISOString(),
+      }],
+    }));
+
+    render(React.createElement(CartSheet, { open: true, onClose: vi.fn() }));
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Item 1 is out of stock');
+    expect(screen.getByRole('button', { name: /Charge/ })).toBeDisabled();
   });
 
   it('BUG REPORT: should handle empty cart gracefully', () => {

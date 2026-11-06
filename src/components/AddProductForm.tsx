@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react';
 import { useStore } from '@/store/useStore';
 import { Product, ProductVariant, CATEGORIES } from '@/types/pos';
-import { X, Plus, ScanBarcode, Trash2 } from 'lucide-react';
+import { X, Plus, ScanBarcode, Trash2, CheckCircle2 } from 'lucide-react';
 import ScannerView from '@/components/ScannerView';
 import { toast } from 'sonner';
 import { LockKeyhole, Barcode } from 'lucide-react';
@@ -29,6 +29,7 @@ export default function AddProductForm({
   const [variants, setVariants] = useState<{ name: string; price: string; stock: string }[]>([]);
   const [showBarcodeScanner, setShowBarcodeScanner] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<'synced' | 'local' | null>(null);
 
   const handleBarcodeDetected = useCallback((scannedBarcode: string) => {
     setBarcode(scannedBarcode);
@@ -102,9 +103,13 @@ export default function AddProductForm({
     };
 
     try {
-      await addProduct(product);
-      toast.success(`${name.trim()} saved to inventory`);
-      onClose();
+      const synced = await addProduct(product);
+      setSaveStatus(synced ? 'synced' : 'local');
+      toast.success(
+        synced
+          ? `${name.trim()} saved to inventory`
+          : `${name.trim()} saved on this device; cloud sync failed`,
+      );
     } catch (err) {
       console.error('Failed to add product:', err);
       toast.error('Could not save product. Please try again.');
@@ -125,16 +130,38 @@ export default function AddProductForm({
           <h1 className="text-section font-semibold">Add Product</h1>
         </div>
         <button
-          onClick={handleSubmit}
-          disabled={isSaving || !name.trim() || !basePrice || isNaN(Number(basePrice)) || Number(basePrice) <= 0}
+          onClick={saveStatus ? onClose : handleSubmit}
+          disabled={isSaving || (!saveStatus && (!name.trim() || !basePrice || isNaN(Number(basePrice)) || Number(basePrice) <= 0))}
           className="bg-primary text-primary-foreground rounded-lg px-4 py-2 text-body font-semibold active-scale disabled:opacity-40"
         >
-          {isSaving ? 'Saving…' : 'Save'}
+          {isSaving ? 'Saving…' : saveStatus ? 'Done' : 'Save'}
         </button>
       </header>
 
       {/* Form */}
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 lg:px-6" style={{ maxHeight: 'calc(100vh - 60px)', WebkitOverflowScrolling: 'touch' }}>
+        {saveStatus && (
+          <div
+            role="status"
+            className={`flex items-start gap-3 rounded-xl border p-4 ${
+              saveStatus === 'synced'
+                ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300'
+                : 'border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-300'
+            }`}
+          >
+            <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" />
+            <div>
+              <p className="font-semibold">
+                {saveStatus === 'synced' ? 'Product saved to inventory' : 'Product saved on this device'}
+              </p>
+              <p className="mt-1 text-sm">
+                {saveStatus === 'synced'
+                  ? `${name.trim()} is ready to sell.`
+                  : `${name.trim()} is available here, but cloud sync failed.`}
+              </p>
+            </div>
+          </div>
+        )}
         <div>
           <label className="text-meta text-muted-foreground font-medium block mb-1">Product Name *</label>
           <input

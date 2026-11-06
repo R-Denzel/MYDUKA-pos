@@ -23,6 +23,7 @@ export default function CartSheet({
 }: CartSheetProps) {
   const {
     cart,
+    products,
     cartTotal,
     updateCartQty,
     removeFromCart,
@@ -46,6 +47,18 @@ export default function CartSheet({
     rate: vatRate,
     inclusive: vatInclusive,
   });
+  const stockIssue = cart.find((item) => {
+    const product = products.find((candidate) => candidate.id === item.productId);
+    const variant = item.variantId
+      ? product?.variants.find((candidate) => candidate.id === item.variantId)
+      : undefined;
+    const available = item.variantId ? variant?.stock : product?.totalStock;
+    return !product || (product.hasVariants && !item.variantId) ||
+      available === undefined || item.qty > available;
+  });
+  const stockIssueMessage = stockIssue
+    ? `${stockIssue.name}${stockIssue.variantName ? ` (${stockIssue.variantName})` : ''} is out of stock or no longer has enough stock.`
+    : '';
 
   const handlePayment = async (method: PaymentMethod) => {
     if (paymentInProgress) return;
@@ -59,7 +72,7 @@ export default function CartSheet({
       }
     } catch (error) {
       console.error('Sale checkout failed', error);
-      toast.error('Sale could not be completed. Please try again.');
+      toast.error(error instanceof Error ? error.message : 'Sale could not be completed. Please try again.');
     } finally {
       setPaymentInProgress(false);
     }
@@ -238,7 +251,11 @@ export default function CartSheet({
                           {item.qty}
                         </span>
                         <button
-                          onClick={() => updateCartQty(item.productId, item.qty + 1, item.variantId)}
+                          onClick={() => {
+                            if (!updateCartQty(item.productId, item.qty + 1, item.variantId)) {
+                              toast.error(`No more stock available for ${item.name}`);
+                            }
+                          }}
                           className="w-10 h-10 rounded-lg bg-card border border-border flex items-center justify-center active-scale"
                         >
                           <Plus className="w-4 h-4" />
@@ -257,7 +274,12 @@ export default function CartSheet({
 
                 {cart.length > 0 && (
                   <div className="px-4 pt-3 pb-2 border-t border-border">
-                    <div className="mb-3 space-y-1 text-xs">
+                  {stockIssue && (
+                    <p role="alert" className="mb-3 rounded-lg bg-destructive/10 px-3 py-2 text-sm font-medium text-destructive">
+                      {stockIssueMessage} Remove it or adjust the quantity before checkout.
+                    </p>
+                  )}
+                  <div className="mb-3 space-y-1 text-xs">
                       <div className="flex justify-between text-muted-foreground">
                         <span>Subtotal after discounts</span>
                         <span>{formatCurrency(totals.subtotal, displayCurrency, exchangeRates)}</span>
@@ -277,7 +299,8 @@ export default function CartSheet({
                     </div>
                     <button
                       onClick={() => setShowPayment(true)}
-                      className="w-full bg-primary text-primary-foreground rounded-lg py-4 text-body font-bold active-scale touch-target"
+                      disabled={Boolean(stockIssue)}
+                      className="w-full bg-primary text-primary-foreground rounded-lg py-4 text-body font-bold active-scale touch-target disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       Charge {formatCurrency(total, displayCurrency, exchangeRates)}
                     </button>

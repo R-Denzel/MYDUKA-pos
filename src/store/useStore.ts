@@ -27,15 +27,15 @@ interface POSStore {
   loadSalesFromFirestore: () => Promise<void>;
   // Products
   products: Product[];
-  addProduct: (product: Product) => void;
+  addProduct: (product: Product) => Promise<boolean>;
   updateProduct: (id: string, updates: Partial<Product>) => void;
   getProductByBarcode: (barcode: string) => Product | undefined;
 
   // Cart
   cart: CartItem[];
-  addToCart: (item: CartItem) => void;
+  addToCart: (item: CartItem) => boolean;
   removeFromCart: (productId: string, variantId?: string) => void;
-  updateCartQty: (productId: string, qty: number, variantId?: string) => void;
+  updateCartQty: (productId: string, qty: number, variantId?: string) => boolean;
   clearCart: () => void;
   cartTotal: (hasPremium?: boolean) => number;
 
@@ -95,11 +95,13 @@ export const useStore = create<POSStore>()(
 
       addProduct: async (product) => {
         set((s) => ({ products: [...s.products, product] }));
-        if (localPremiumDemoEnabled) return;
+        if (localPremiumDemoEnabled) return true;
         try {
           await setDoc(doc(db, 'products', product.id), product);
+          return true;
         } catch (err) {
           console.warn('Failed to persist product to Firebase', err);
+          return false;
         }
       },
 
@@ -124,22 +126,42 @@ export const useStore = create<POSStore>()(
       getProductByBarcode: (barcode) =>
         get().products.find((p) => p.barcode === barcode),
 
-      addToCart: (item) =>
-        set((s) => {
-          const existing = s.cart.find(
-            (c) => c.productId === item.productId && c.variantId === item.variantId
-          );
-          if (existing) {
-            return {
-              cart: s.cart.map((c) =>
-                c.productId === item.productId && c.variantId === item.variantId
-                  ? { ...c, qty: c.qty + 1 }
-                  : c
-              ),
-            };
-          }
-          return { cart: [...s.cart, item] };
-        }),
+      addToCart: (item) => {
+        const { products, cart } = get();
+        const product = products.find((candidate) => candidate.id === item.productId);
+        const variant = item.variantId
+          ? product?.variants.find((candidate) => candidate.id === item.variantId)
+          : undefined;
+        const stock = item.variantId ? variant?.stock : product?.totalStock;
+        if (
+          !product ||
+          (product.hasVariants && !item.variantId) ||
+          stock === undefined ||
+          !Number.isFinite(item.qty) ||
+          item.qty <= 0
+        ) {
+          return false;
+        }
+
+        const existing = cart.find(
+          (candidate) =>
+            candidate.productId === item.productId && candidate.variantId === item.variantId,
+        );
+        const requestedQty = item.qty + (existing?.qty ?? 0);
+        if (requestedQty > stock) return false;
+
+        set((state) => ({
+          cart: existing
+            ? state.cart.map((candidate) =>
+                candidate.productId === item.productId &&
+                candidate.variantId === item.variantId
+                  ? { ...candidate, qty: requestedQty }
+                  : candidate,
+              )
+            : [...state.cart, item],
+        }));
+        return true;
+      },
 
       removeFromCart: (productId, variantId) =>
         set((s) => ({
@@ -148,19 +170,36 @@ export const useStore = create<POSStore>()(
           ),
         })),
 
-      updateCartQty: (productId, qty, variantId) =>
-        set((s) => ({
-          cart:
-            qty <= 0
-              ? s.cart.filter(
-                  (c) => !(c.productId === productId && c.variantId === variantId)
-                )
-              : s.cart.map((c) =>
-                  c.productId === productId && c.variantId === variantId
-                    ? { ...c, qty }
-                    : c
-                ),
-        })),
+      updateCartQty: (productId, qty, variantId) => {
+        const { products, cart } = get();
+        if (!Number.isFinite(qty)) return false;
+        if (qty <= 0) {
+          set((state) => ({
+            cart: state.cart.filter(
+              (item) => !(item.productId === productId && item.variantId === variantId),
+            ),
+          }));
+          return true;
+        }
+
+        const product = products.find((candidate) => candidate.id === productId);
+        const variant = variantId
+          ? product?.variants.find((candidate) => candidate.id === variantId)
+          : undefined;
+        const stock = variantId ? variant?.stock : product?.totalStock;
+        if (!product || (product.hasVariants && !variantId) || stock === undefined || qty > stock) {
+          return false;
+        }
+
+        set((state) => ({
+          cart: state.cart.map((item) =>
+            item.productId === productId && item.variantId === variantId
+              ? { ...item, qty }
+              : item,
+          ),
+        }));
+        return true;
+      },
 
       updateCartDiscount: (productId, variantId, discountType, discountValue) =>
         set((s) => ({
@@ -207,6 +246,28 @@ export const useStore = create<POSStore>()(
       completeSale: async (paymentMethod, ownerUid, hasPremium = false) => {
         const { cart, products } = get();
         if (cart.length === 0) return null;
+
+        const quantities = new Map<string, number>();
+        for (const item of cart) {
+          const product = products.find((candidate) => candidate.id === item.productId);
+          const variant = item.variantId
+            ? product?.variants.find((candidate) => candidate.id === item.variantId)
+            : undefined;
+          const stock = item.variantId ? variant?.stock : product?.totalStock;
+          if (!product || (product.hasVariants && !item.variantId) || stock === undefined) {
+            throw new Error(`${item.name} is no longer available in inventory.`);
+          }
+
+          const key = `${item.productId}:${item.variantId ?? ''}`;
+          const quantity = (quantities.get(key) ?? 0) + item.qty;
+          quantities.set(key, quantity);
+          if (!Number.isFinite(item.qty) || item.qty <= 0 || quantity > stock) {
+            const label = item.variantName
+              ? `${item.name} (${item.variantName})`
+              : item.name;
+            throw new Error(`Insufficient stock for ${label}. ${stock} available.`);
+          }
+        }
 
         const saleItems = getBillableItems(cart, hasPremium);
         const vatEnabled = hasPremium && get().vatEnabled;

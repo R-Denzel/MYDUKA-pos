@@ -148,6 +148,10 @@ export default function ScannerView({
       const product = getProductByBarcode(cleanedCode);
       if (product) {
         if (product.hasVariants && product.variants.length > 0) {
+          if (product.variants.every((variant) => variant.stock <= 0)) {
+            toast.error(`${product.name} is out of stock`);
+            return;
+          }
           setVariantProduct(product);
           setLastScan({ code: cleanedCode, name: product.name });
           setUnknownBarcode('');
@@ -155,12 +159,16 @@ export default function ScannerView({
           return;
         }
 
-        addToCart({
+        const added = addToCart({
           productId: product.id,
           name: product.name,
           price: product.basePrice,
           qty: 1,
         });
+        if (!added) {
+          toast.error(`${product.name} is out of stock`);
+          return;
+        }
         setLastScan({ code: cleanedCode, name: product.name });
         setUnknownBarcode('');
         setManualCode('');
@@ -176,7 +184,7 @@ export default function ScannerView({
   );
 
   const addVariantToCart = (product: Product, variant: ProductVariant) => {
-    addToCart({
+    const added = addToCart({
       productId: product.id,
       variantId: variant.id,
       name: product.name,
@@ -184,6 +192,10 @@ export default function ScannerView({
       price: variant.price,
       qty: 1,
     });
+    if (!added) {
+      toast.error(`${product.name} (${variant.name}) is out of stock`);
+      return;
+    }
     setVariantProduct(null);
     toast.success(`${product.name} (${variant.name}) added to cart`);
   };
